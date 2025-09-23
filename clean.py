@@ -51,7 +51,7 @@ if st.button("Se déconnecter"):
 PROJECT_ID = "datalake-380714"
 DATASET_ID = "pole_agri"
 TABLE_WITH_SPACE = "client web_agrizone_client"
-ROW_LIMIT = 1000  # 0 = pas de limite
+ROW_LIMIT = 0  # 0 = pas de limite
 
 creds_dict = st.secrets["gcp_service_account"]
 credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
