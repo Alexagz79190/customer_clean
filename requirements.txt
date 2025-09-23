@@ -5,4 +5,5 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 openpyxl
-streamlit-authenticator
+streamlit-authenticator==0.3.2
+
