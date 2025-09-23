@@ -5,23 +5,28 @@ from google.oauth2 import service_account
 import pandas as pd
 import io
 
-# ==================== CONFIG UTILISATEURS ====================
-# ⚠️ Mets les mots de passe hashés pour plus de sécurité !
-usernames = ["alexis", "admin"]
-names = ["Alexis", "Administrateur"]
-passwords = ["test123", "admin123"]  # à hasher en vrai !
+# ==================== LOGIN ====================
+# Charger infos utilisateurs depuis secrets.toml
+usernames = st.secrets["users"]["usernames"]
+names = st.secrets["users"]["names"]
+hashed_passwords = st.secrets["users"]["passwords"]
 
-hashed_passwords = stauth.Hasher(passwords).generate()
+# Construire les credentials
+credentials = {
+    "usernames": {
+        usernames[i]: {"name": names[i], "password": hashed_passwords[i]}
+        for i in range(len(usernames))
+    }
+}
 
+# Authenticator
 authenticator = stauth.Authenticate(
-    dict(zip(usernames, names)),
-    dict(zip(usernames, hashed_passwords)),
+    credentials,
     "cookie_name",
     "signature_key",
     cookie_expiry_days=1
 )
 
-# ==================== LOGIN ====================
 st.title("🔐 Portail sécurisé - Export BigQuery")
 
 name, authentication_status, username = authenticator.login("Login", "main")
@@ -31,6 +36,7 @@ if authentication_status == False:
 elif authentication_status == None:
     st.warning("Veuillez entrer vos identifiants 🔑")
 elif authentication_status:
+    st.success(f"Bienvenue {name} 🎉")
 
     # ==================== PARAMÈTRES BIGQUERY ====================
     PROJECT_ID = "datalake-380714"
@@ -38,10 +44,10 @@ elif authentication_status:
     TABLE_WITH_SPACE = "client web_agrizone_client"
     ROW_LIMIT = 0
 
-    # Charger credentials depuis secrets.toml
+    # Charger credentials GCP depuis secrets.toml
     creds_dict = st.secrets["gcp_service_account"]
-    credentials = service_account.Credentials.from_service_account_info(creds_dict)
-    client = bigquery.Client(credentials=credentials, project=creds_dict["project_id"])
+    credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
+    client = bigquery.Client(credentials=credentials_gcp, project=creds_dict["project_id"])
 
     # ==================== FONCTIONS ====================
     def bq_to_dataframe(row_limit=None) -> pd.DataFrame:
@@ -85,9 +91,7 @@ elif authentication_status:
 
         return df_final
 
-    # ==================== INTERFACE STREAMLIT ====================
-    st.success(f"Bienvenue {name} 🎉")
-
+    # ==================== INTERFACE ====================
     if st.button("📥 Extraire et nettoyer les données BigQuery"):
         with st.spinner("Connexion à BigQuery..."):
             df_raw = bq_to_dataframe(ROW_LIMIT or None)
