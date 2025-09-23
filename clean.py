@@ -6,12 +6,12 @@ import pandas as pd
 import io
 
 # ==================== CONFIG UTILISATEURS ====================
-# Les infos (usernames, names, passwords hashés) sont stockées dans secrets.toml
+# Les utilisateurs et mots de passe hashés sont dans secrets.toml
 usernames = st.secrets["users"]["usernames"]
 names = st.secrets["users"]["names"]
 hashed_passwords = st.secrets["users"]["passwords"]
 
-# Construire les credentials attendus par streamlit-authenticator
+# Credentials pour streamlit-authenticator
 credentials = {
     "usernames": {
         usernames[i]: {"name": names[i], "password": hashed_passwords[i]}
@@ -30,7 +30,10 @@ authenticator = stauth.Authenticate(
 # ==================== INTERFACE LOGIN ====================
 st.title("🔐 Portail sécurisé - Export BigQuery")
 
-name, authentication_status, username = authenticator.login("Login", "sidebar")
+name, authentication_status, username = authenticator.login(
+    form_name="Login",
+    location="sidebar"
+)
 
 if authentication_status is False:
     st.error("Utilisateur ou mot de passe incorrect ❌")
@@ -45,7 +48,7 @@ elif authentication_status:
     PROJECT_ID = "datalake-380714"
     DATASET_ID = "pole_agri"
     TABLE_WITH_SPACE = "client web_agrizone_client"
-    ROW_LIMIT = 0
+    ROW_LIMIT = 0  # 0 = pas de limite
 
     # Charger credentials GCP depuis secrets.toml
     creds_dict = st.secrets["gcp_service_account"]
