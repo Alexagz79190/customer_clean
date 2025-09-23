@@ -29,7 +29,7 @@ authenticator = stauth.Authenticate(
 
 st.title("🔐 Portail sécurisé - Export BigQuery")
 
-name, authentication_status, username = authenticator.login("Login", "main")
+name, authentication_status, username = authenticator.login("Login", location="main")
 
 if authentication_status == False:
     st.error("Utilisateur ou mot de passe incorrect ❌")
