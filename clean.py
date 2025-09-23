@@ -5,13 +5,13 @@ from google.oauth2 import service_account
 import pandas as pd
 import io
 
-# ==================== LOGIN ====================
-# Charger infos utilisateurs depuis secrets.toml
+# ==================== CONFIG UTILISATEURS ====================
+# Les infos (usernames, names, passwords hashés) sont stockées dans secrets.toml
 usernames = st.secrets["users"]["usernames"]
 names = st.secrets["users"]["names"]
 hashed_passwords = st.secrets["users"]["passwords"]
 
-# Construire les credentials
+# Construire les credentials attendus par streamlit-authenticator
 credentials = {
     "usernames": {
         usernames[i]: {"name": names[i], "password": hashed_passwords[i]}
@@ -27,14 +27,17 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=1
 )
 
+# ==================== INTERFACE LOGIN ====================
 st.title("🔐 Portail sécurisé - Export BigQuery")
 
-name, authentication_status, username = authenticator.login("Login", location="sidebar")
+name, authentication_status = authenticator.login("Login", location="sidebar")
 
-if authentication_status == False:
+if authentication_status is False:
     st.error("Utilisateur ou mot de passe incorrect ❌")
-elif authentication_status == None:
+
+elif authentication_status is None:
     st.warning("Veuillez entrer vos identifiants 🔑")
+
 elif authentication_status:
     st.success(f"Bienvenue {name} 🎉")
 
@@ -91,7 +94,7 @@ elif authentication_status:
 
         return df_final
 
-    # ==================== INTERFACE ====================
+    # ==================== INTERFACE APP ====================
     if st.button("📥 Extraire et nettoyer les données BigQuery"):
         with st.spinner("Connexion à BigQuery..."):
             df_raw = bq_to_dataframe(ROW_LIMIT or None)
