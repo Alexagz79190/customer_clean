@@ -31,7 +31,7 @@ if not st.session_state["logged_in"]:
                 st.session_state["logged_in"] = True
                 st.session_state["name"] = valid_names[idx]
                 st.success(f"Bienvenue {st.session_state['name']} 🎉")
-                st.experimental_rerun()
+                st.rerun()  # ✅ rerun propre
             else:
                 st.error("Mot de passe incorrect ❌")
         else:
@@ -45,13 +45,13 @@ st.success(f"Connecté en tant que {st.session_state['name']} ✅")
 # Bouton de déconnexion
 if st.button("Se déconnecter"):
     st.session_state["logged_in"] = False
-    st.experimental_rerun()
+    st.rerun()
 
 # ==================== BIGQUERY ====================
 PROJECT_ID = "datalake-380714"
 DATASET_ID = "pole_agri"
 TABLE_WITH_SPACE = "client web_agrizone_client"
-ROW_LIMIT = 0
+ROW_LIMIT = 0  # 0 = pas de limite
 
 creds_dict = st.secrets["gcp_service_account"]
 credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
@@ -98,6 +98,7 @@ def clean_clients(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_final
 
+# ==================== INTERFACE ====================
 if st.button("📥 Extraire et nettoyer les données BigQuery"):
     with st.spinner("Connexion à BigQuery..."):
         df_raw = bq_to_dataframe(ROW_LIMIT or None)
@@ -109,6 +110,7 @@ if st.button("📥 Extraire et nettoyer les données BigQuery"):
     st.write(f"✅ Données nettoyées : {len(df_clean)} lignes")
     st.dataframe(df_clean.head(20))
 
+    # Export Excel
     buffer = io.BytesIO()
     df_clean.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
