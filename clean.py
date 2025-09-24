@@ -145,6 +145,8 @@ elif page == "Panier Moyen":
 # ==================== PAGE STATISTIQUES FAMILLE ====================
 elif page == "Statistiques Famille":
     st.header("📊 Statistiques par Famille")
+
+    # Dates
     if "date_debut_fam" not in st.session_state:
         st.session_state["date_debut_fam"] = datetime.date(2025, 1, 1)
     if "date_fin_fam" not in st.session_state:
@@ -155,53 +157,78 @@ elif page == "Statistiques Famille":
     with col2:
         date_fin = st.date_input("Date de fin", key="date_fin_fam", format="DD/MM/YYYY")
 
-    # Charger les données pour les sélecteurs
-    query_selecteurs = f"""
-    SELECT DISTINCT
-        p.famille1, p.famille2, p.famille3, p.famille4
-    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-    INNER JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
-        ON c.code_produit = p.code
-    WHERE c.date_validation IS NOT NULL
-      AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
-      AND (p.famille1 IS NOT NULL OR p.famille2 IS NOT NULL OR p.famille3 IS NOT NULL OR p.famille4 IS NOT NULL)
+    # Charger les données des commandes et des produits séparément
+    query_commandes = f"""
+    SELECT
+        numero_commande,
+        date_validation,
+        code_produit,
+        quantite,
+        prix_total_ht,
+        prix_achat
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}`
+    WHERE date_validation IS NOT NULL
+      AND DATE(date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
     """
-    df_selecteurs = bq_query(query_selecteurs)
+    df_commandes = bq_query(query_commandes)
 
-    # Sélecteurs persistants
+    query_produits = f"""
+    SELECT
+        code,
+        famille1, famille1_url,
+        famille2, famille2_url,
+        famille3, famille3_url,
+        famille4, famille4_url
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}`
+    WHERE famille1 IS NOT NULL OR famille2 IS NOT NULL OR famille3 IS NOT NULL OR famille4 IS NOT NULL
+    """
+    df_produits = bq_query(query_produits)
+
+    # Vérification des produits sans famille dans la table produit
+    produits_sans_famille = df_produits[
+        df_produits["famille1"].isna() &
+        df_produits["famille2"].isna() &
+        df_produits["famille3"].isna() &
+        df_produits["famille4"].isna()
+    ]
+    if not produits_sans_famille.empty:
+        st.warning(f"⚠️ {len(produits_sans_famille)} produits n'ont aucune famille définie dans la table produit.")
+
+    # Jointure avec pandas
+    df = pd.merge(
+        df_commandes,
+        df_produits,
+        left_on="code_produit",
+        right_on="code",
+        how="inner"  # On ne garde que les commandes avec un produit valide
+    )
+
+    # Vérification des commandes sans famille après jointure
+    commandes_sans_famille = df[
+        df["famille1"].isna() &
+        df["famille2"].isna() &
+        df["famille3"].isna() &
+        df["famille4"].isna()
+    ]
+    if not commandes_sans_famille.empty:
+        st.error(f"❌ {len(commandes_sans_famille)} commandes ont un produit sans famille. Vérifiez les codes produits suivants : {commandes_sans_famille['code_produit'].unique()}")
+
+    # Déterminer la famille principale
+    df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
+    df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
+
+    # Sélecteurs persistants pour les familles
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        choix_f1 = multiselect_persistant("Famille 1", sorted(df_selecteurs["famille1"].dropna().unique().tolist()), "choix_f1")
+        choix_f1 = multiselect_persistant("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), "choix_f1")
     with col2:
-        choix_f2 = multiselect_persistant("Famille 2", sorted(df_selecteurs["famille2"].dropna().unique().tolist()), "choix_f2")
+        choix_f2 = multiselect_persistant("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), "choix_f2")
     with col3:
-        choix_f3 = multiselect_persistant("Famille 3", sorted(df_selecteurs["famille3"].dropna().unique().tolist()), "choix_f3")
+        choix_f3 = multiselect_persistant("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), "choix_f3")
     with col4:
-        choix_f4 = multiselect_persistant("Famille 4", sorted(df_selecteurs["famille4"].dropna().unique().tolist()), "choix_f4")
+        choix_f4 = multiselect_persistant("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), "choix_f4")
 
     if st.button("📥 Générer statistiques"):
-        query = f"""
-        SELECT
-            c.numero_commande,
-            c.date_validation,
-            c.quantite,
-            c.prix_total_ht,
-            c.prix_achat,
-            p.famille1, p.famille1_url,
-            p.famille2, p.famille2_url,
-            p.famille3, p.famille3_url,
-            p.famille4, p.famille4_url
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-        INNER JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
-            ON c.code_produit = p.code
-        WHERE c.date_validation IS NOT NULL
-          AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
-          AND (p.famille1 IS NOT NULL OR p.famille2 IS NOT NULL OR p.famille3 IS NOT NULL OR p.famille4 IS NOT NULL)
-        """
-        df = bq_query(query)
-        df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
-        df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
-
         # Appliquer les filtres
         if choix_f1:
             df = df[df["famille1"].isin(choix_f1)]
@@ -219,6 +246,7 @@ elif page == "Statistiques Famille":
             marge=("marge_calc", "sum")
         ).reset_index()
         df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
+
         st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped)
         export_excel(df_grouped, "stats_famille.xlsx", "download_stats_famille")
