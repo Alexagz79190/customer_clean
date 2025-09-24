@@ -1,6 +1,7 @@
 streamlit==1.33.0
 pandas==2.2.2
 google-cloud-bigquery==3.25.0
+google-cloud-bigquery-storage==2.24.0
 google-auth==2.35.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
