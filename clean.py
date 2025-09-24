@@ -214,7 +214,7 @@ elif page == "Statistiques Famille":
     df = pd.merge(
         df_commandes, df_produits,
         left_on="code_produit", right_on="code",
-        how="left", indicator=True
+        how="right", indicator=True
     )
 
     # Détection commandes sans famille
