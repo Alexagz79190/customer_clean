@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-import io
-import datetime
 from google.cloud import bigquery
 from google.oauth2 import service_account
+import io
+import datetime
 
 # ==================== CONFIG ====================
 PROJECT_ID = "datalake-380714"
@@ -14,17 +14,19 @@ TABLES = {
     "commande": "commande web_agrizone_commande",
 }
 
-# Auth GCP depuis secrets.toml
+# Auth GCP
 creds_dict = st.secrets["gcp_service_account"]
 credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
-client = bigquery.Client(credentials=credentials_gcp, project=PROJECT_ID)
+client = bigquery.Client(credentials=credentials_gcp, project=creds_dict["project_id"])
+
 
 # ==================== UTILS ====================
-def bq_query(sql: str) -> pd.DataFrame:
-    job = client.query(sql)
+def bq_query(query: str) -> pd.DataFrame:
+    job = client.query(query)
     return job.result().to_dataframe()
 
 def export_excel(df: pd.DataFrame, filename: str):
+    """Téléchargement Excel avec séparateur virgule et décimales FR."""
     buffer = io.BytesIO()
     df.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
@@ -35,135 +37,132 @@ def export_excel(df: pd.DataFrame, filename: str):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-# ==================== AUTH SIMPLE ====================
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
+def multiselect_persistant(label, options, key):
+    if key not in st.session_state:
+        st.session_state[key] = []
+    current = st.session_state[key]
+    selected = st.multiselect(label, options, default=current, key=f"{key}_widget")
+    st.session_state[key] = selected
+    return selected
 
-if not st.session_state["logged_in"]:
-    st.subheader("🔐 Connexion requise")
-    username = st.text_input("Nom d'utilisateur")
-    password = st.text_input("Mot de passe", type="password")
-
-    if st.button("Se connecter"):
-        valid_users = st.secrets["users"]["usernames"]
-        valid_names = st.secrets["users"]["names"]
-        valid_pass = st.secrets["users"]["passwords"]
-
-        if username in valid_users:
-            idx = valid_users.index(username)
-            if password == valid_pass[idx]:  # ⚠️ ici mot de passe en clair, à remplacer par bcrypt si besoin
-                st.session_state["logged_in"] = True
-                st.session_state["name"] = valid_names[idx]
-                st.success(f"Bienvenue {st.session_state['name']} 🎉")
-                st.rerun()
-            else:
-                st.error("Mot de passe incorrect ❌")
-        else:
-            st.error("Utilisateur inconnu ❌")
-
-    st.stop()
-
-st.sidebar.success(f"✅ Connecté en tant que {st.session_state['name']}")
-
-if st.sidebar.button("Se déconnecter"):
-    st.session_state["logged_in"] = False
-    st.rerun()
 
 # ==================== MENU ====================
-page = st.sidebar.radio("📑 Navigation", ["Clients", "Panier Moyen", "Statistiques Famille"])
+st.sidebar.title("📑 Menu")
+page = st.sidebar.radio("Navigation", ["Clients", "Panier Moyen", "Statistiques Famille"])
+
 
 # ==================== PAGE CLIENTS ====================
 if page == "Clients":
-    st.header("📧 Export Clients nettoyés")
-    query = f"SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['client']}` LIMIT 1000"
-    df = bq_query(query)
-    st.dataframe(df.head(20))
-    export_excel(df, "clients.xlsx")
+    st.header("👥 Export Clients")
+
+    if st.button("📥 Générer export"):
+        query = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['client']}`
+        """
+        df = bq_query(query)
+
+        # Nettoyage basique
+        df = df.dropna(subset=["email_client"])
+        df = df.drop_duplicates(subset=["email_client"])
+        df["Email"] = df["email_client"].astype(str).str.strip()
+        df["First Name"] = df["prenom_client"].astype(str).str.strip().str.title()
+        df["Last Name"] = df["nom_client"].astype(str).str.strip().str.title()
+        df["Country"] = df["libelle_lg_pays"].astype(str).str.strip().str[:2].str.upper()
+        df["Zip"] = (
+            df["code_postal_adr_client"]
+            .astype(str)
+            .str.replace(r"[\s.]", "", regex=True)
+            .str.strip()
+            .str[:5]
+        )
+        df["Zip"] = df["Zip"].where(df["Zip"].str.fullmatch(r"\d{5}") == True, pd.NA)
+        digits = df["portable_client"].astype(str).str.replace(r"\D", "", regex=True)
+        df["N° de mobile"] = "+33" + digits.str[-9:]
+        df = df[df["N° de mobile"].str.len() == 12]
+
+        cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
+        df_final = df[cols].copy()
+        df_final = df_final.replace({r"^\s*$": pd.NA}, regex=True).dropna(how="any")
+
+        st.write(f"✅ {len(df_final)} lignes exportées")
+        st.dataframe(df_final.head(20))
+        export_excel(df_final, "clients_clean.xlsx")
+
 
 # ==================== PAGE PANIER MOYEN ====================
 elif page == "Panier Moyen":
     st.header("🛒 Analyse Panier Moyen")
 
-    # Date début / fin persistantes
-    if "date_debut_cmd" not in st.session_state:
-        st.session_state["date_debut_cmd"] = datetime.date(2020, 1, 1)
-    if "date_fin_cmd" not in st.session_state:
-        st.session_state["date_fin_cmd"] = datetime.date.today()
+    if "date_debut_panier" not in st.session_state:
+        st.session_state["date_debut_panier"] = datetime.date(2020, 1, 1)
+    if "date_fin_panier" not in st.session_state:
+        st.session_state["date_fin_panier"] = datetime.date.today()
 
     col1, col2 = st.columns(2)
     with col1:
-        date_debut = st.date_input(
-            "Date de début (jj/mm/aaaa)",
-            value=st.session_state["date_debut_cmd"],
-            format="DD/MM/YYYY",
-            key="date_debut_cmd"
-        )
+        st.date_input("Date de début", key="date_debut_panier", format="DD/MM/YYYY")
     with col2:
-        date_fin = st.date_input(
-            "Date de fin (jj/mm/aaaa)",
-            value=st.session_state["date_fin_cmd"],
-            format="DD/MM/YYYY",
-            key="date_fin_cmd"
-        )
+        st.date_input("Date de fin", key="date_fin_panier", format="DD/MM/YYYY")
 
     seuil_ventes = 2
     seuil_panier_moyen = 250
     seuil_ca = 180
 
-    if st.button("📥 Lancer analyse"):
+    if st.button("📥 Générer analyse"):
         query = f"""
-        SELECT
+        WITH commandes AS (
+          SELECT
             c.numero_commande,
-            c.date_validation,
             c.code_produit,
             c.quantite,
             c.prix_total_ht,
             c.prix_achat,
             p.libelle,
-            p.famille4, p.famille3, p.famille2, p.famille1
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
+            p.prix_vente_ht AS prix_vente
+          FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
+          LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
             ON c.code_produit = p.code
-        WHERE c.date_validation IS NOT NULL
-          AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
+          WHERE c.date_validation IS NOT NULL
+            AND DATE(c.date_validation) BETWEEN "{st.session_state['date_debut_panier']}" AND "{st.session_state['date_fin_panier']}"
+        )
+        SELECT
+          code_produit,
+          libelle,
+          prix_vente,
+          COUNT(DISTINCT numero_commande) AS nb_commandes,
+          SUM(quantite) AS quantite_vendue,
+          SUM(prix_total_ht) AS ca,
+          ROUND(SAFE_DIVIDE(SUM(prix_total_ht), COUNT(DISTINCT numero_commande)), 2) AS panier_moyen
+        FROM commandes
+        GROUP BY code_produit, libelle, prix_vente
+        ORDER BY ca DESC
         """
         df = bq_query(query)
 
-        # Escalade famille
-        df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
-
-        # Calcul panier moyen par commande
-        panier_commande = df.groupby("numero_commande").agg(
-            total_commande=("prix_total_ht", "sum")
-        ).reset_index()
-
-        # Rejoint pour chaque produit
-        df = df.merge(panier_commande, on="numero_commande", how="left")
-
-        # Groupement par produit
-        df_grouped = df.groupby(["code_produit", "libelle", "famille"]).agg(
-            nb_commandes=("numero_commande", "nunique"),
-            qte_vendue=("quantite", "sum"),
-            ca_total=("prix_total_ht", "sum"),
-            prix_moyen=("prix_total_ht", "mean"),
-            panier_moyen=("total_commande", "mean")
-        ).reset_index()
-
-        # Application seuils
-        df_filtered = df_grouped[
-            (df_grouped["nb_commandes"] >= seuil_ventes) &
-            (df_grouped["panier_moyen"] >= seuil_panier_moyen) &
-            (df_grouped["ca_total"] >= seuil_ca)
+        df = df[
+            (df["nb_commandes"] >= seuil_ventes)
+            & (df["panier_moyen"].astype(float) >= seuil_panier_moyen)
+            & (df["ca"].astype(float) >= seuil_ca)
         ]
 
-        st.dataframe(df_filtered)
-        export_excel(df_filtered, "panier_moyen.xlsx")
+        st.write(f"✅ {len(df)} produits analysés")
+        st.dataframe(df.head(20))
+        export_excel(df, "panier_moyen_complet.xlsx")
+
+        sup800 = df[df["prix_vente"] > 800]
+        if not sup800.empty:
+            export_excel(sup800, "panier_moyen_prix_sup800.xlsx")
+
+        inf800 = df[df["prix_vente"] <= 800]
+        if not inf800.empty:
+            export_excel(inf800, "panier_moyen_prix_inf_ou_egal800.xlsx")
+
 
 # ==================== PAGE STATISTIQUES FAMILLE ====================
 elif page == "Statistiques Famille":
     st.header("📊 Statistiques par Famille")
 
-    # Dates persistantes
     if "date_debut_fam" not in st.session_state:
         st.session_state["date_debut_fam"] = datetime.date(2025, 1, 1)
     if "date_fin_fam" not in st.session_state:
@@ -171,19 +170,9 @@ elif page == "Statistiques Famille":
 
     col1, col2 = st.columns(2)
     with col1:
-        date_debut = st.date_input(
-            "Date de début (jj/mm/aaaa)",
-            key="date_debut_fam",
-            value=st.session_state["date_debut_fam"],
-            format="DD/MM/YYYY"
-        )
+        date_debut = st.date_input("Date de début", key="date_debut_fam", format="DD/MM/YYYY")
     with col2:
-        date_fin = st.date_input(
-            "Date de fin (jj/mm/aaaa)",
-            key="date_fin_fam",
-            value=st.session_state["date_fin_fam"],
-            format="DD/MM/YYYY"
-        )
+        date_fin = st.date_input("Date de fin", key="date_fin_fam", format="DD/MM/YYYY")
 
     if st.button("📥 Générer statistiques"):
         query = f"""
@@ -205,22 +194,19 @@ elif page == "Statistiques Famille":
         """
         df = bq_query(query)
 
-        # Escalade familles
         df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
         df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
 
-        # Multiselect persistants AVEC clé
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            choix_f1 = st.multiselect("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), key="choix_f1")
+            choix_f1 = multiselect_persistant("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), "choix_f1")
         with col2:
-            choix_f2 = st.multiselect("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), key="choix_f2")
+            choix_f2 = multiselect_persistant("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), "choix_f2")
         with col3:
-            choix_f3 = st.multiselect("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), key="choix_f3")
+            choix_f3 = multiselect_persistant("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), "choix_f3")
         with col4:
-            choix_f4 = st.multiselect("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), key="choix_f4")
+            choix_f4 = multiselect_persistant("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), "choix_f4")
 
-        # Application filtres
         if choix_f1:
             df = df[df["famille1"].isin(choix_f1)]
         if choix_f2:
@@ -230,7 +216,6 @@ elif page == "Statistiques Famille":
         if choix_f4:
             df = df[df["famille4"].isin(choix_f4)]
 
-        # Calculs
         df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
         df_grouped = df.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
@@ -238,6 +223,6 @@ elif page == "Statistiques Famille":
         ).reset_index()
         df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
 
+        st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped)
         export_excel(df_grouped, "stats_famille.xlsx")
-
