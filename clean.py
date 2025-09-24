@@ -173,22 +173,17 @@ elif page == "Statistiques Famille":
     with col1:
         date_debut = st.date_input(
             "Date de début (jj/mm/aaaa)",
+            key="date_debut_fam",
             value=st.session_state["date_debut_fam"],
-            format="DD/MM/YYYY",
-            key="date_debut_fam"
+            format="DD/MM/YYYY"
         )
     with col2:
         date_fin = st.date_input(
             "Date de fin (jj/mm/aaaa)",
+            key="date_fin_fam",
             value=st.session_state["date_fin_fam"],
-            format="DD/MM/YYYY",
-            key="date_fin_fam"
+            format="DD/MM/YYYY"
         )
-
-    # Initialisation filtres familles persistants
-    for k in ["f1", "f2", "f3", "f4"]:
-        if k not in st.session_state:
-            st.session_state[k] = []
 
     if st.button("📥 Générer statistiques"):
         query = f"""
@@ -214,34 +209,26 @@ elif page == "Statistiques Famille":
         df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
         df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
 
-        # Sélecteurs persistants
+        # Multiselect persistants AVEC clé
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            choix_f1 = st.multiselect("Famille 1", sorted(df["famille1"].dropna().unique().tolist()),
-                                      default=st.session_state["f1"])
-            st.session_state["f1"] = choix_f1
+            choix_f1 = st.multiselect("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), key="choix_f1")
         with col2:
-            choix_f2 = st.multiselect("Famille 2", sorted(df["famille2"].dropna().unique().tolist()),
-                                      default=st.session_state["f2"])
-            st.session_state["f2"] = choix_f2
+            choix_f2 = st.multiselect("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), key="choix_f2")
         with col3:
-            choix_f3 = st.multiselect("Famille 3", sorted(df["famille3"].dropna().unique().tolist()),
-                                      default=st.session_state["f3"])
-            st.session_state["f3"] = choix_f3
+            choix_f3 = st.multiselect("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), key="choix_f3")
         with col4:
-            choix_f4 = st.multiselect("Famille 4", sorted(df["famille4"].dropna().unique().tolist()),
-                                      default=st.session_state["f4"])
-            st.session_state["f4"] = choix_f4
+            choix_f4 = st.multiselect("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), key="choix_f4")
 
         # Application filtres
-        if st.session_state["f1"]:
-            df = df[df["famille1"].isin(st.session_state["f1"])]
-        if st.session_state["f2"]:
-            df = df[df["famille2"].isin(st.session_state["f2"])]
-        if st.session_state["f3"]:
-            df = df[df["famille3"].isin(st.session_state["f3"])]
-        if st.session_state["f4"]:
-            df = df[df["famille4"].isin(st.session_state["f4"])]
+        if choix_f1:
+            df = df[df["famille1"].isin(choix_f1)]
+        if choix_f2:
+            df = df[df["famille2"].isin(choix_f2)]
+        if choix_f3:
+            df = df[df["famille3"].isin(choix_f3)]
+        if choix_f4:
+            df = df[df["famille4"].isin(choix_f4)]
 
         # Calculs
         df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
@@ -253,3 +240,4 @@ elif page == "Statistiques Famille":
 
         st.dataframe(df_grouped)
         export_excel(df_grouped, "stats_famille.xlsx")
+
