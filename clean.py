@@ -97,26 +97,24 @@ def query_commandes(date_min="2020-01-01"):
         c.quantite,
         c.prix_total_ht,
         c.prix_achat,
-        p.libelle AS libelle_produit,
-        p.prix_vente_ht,
-        COALESCE(NULLIF(p.famille4, ''), NULLIF(p.famille3, ''), NULLIF(p.famille2, ''), p.famille1) AS famille_finale
+        p.libelle,
+        p.prix_vente_ht AS prix_vente
       FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
       LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
       WHERE c.date_validation IS NOT NULL
-        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) >= DATE '{date_min}'
+        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) >= DATE('{date_min}')
     )
     SELECT
       code_produit,
-      libelle_produit,
-      famille_finale,
+      libelle,
+      prix_vente,
       COUNT(DISTINCT numero_commande) AS nb_commandes,
-      SUM(quantite) AS quantite_totale,
+      SUM(quantite) AS quantite_vendue,
       SUM(prix_total_ht) AS ca,
-      ROUND(SUM(prix_total_ht) / COUNT(DISTINCT numero_commande), 2) AS panier_moyen,
-      ANY_VALUE(prix_vente_ht) AS prix_vente
+      ROUND(SAFE_DIVIDE(SUM(prix_total_ht), COUNT(DISTINCT numero_commande)), 2) AS panier_moyen
     FROM commandes
-    GROUP BY code_produit, libelle_produit, famille_finale
+    GROUP BY code_produit, libelle, prix_vente
     ORDER BY ca DESC
     """
     return client.query(QUERY).result().to_dataframe()
