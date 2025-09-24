@@ -184,77 +184,89 @@ elif page == "Statistiques Famille":
     """
     df_produits = bq_query(query_produits)
 
-    # Jointure avec pandas
+    # Jointure avec pandas (LEFT JOIN pour détecter les commandes sans famille)
     df = pd.merge(
         df_commandes,
         df_produits,
         left_on="code_produit",
         right_on="code",
-        how="left"  # On garde toutes les commandes, même si le produit n'existe pas ou n'a pas de famille
+        how="left",
+        indicator=True
     )
 
-    # Identifier les commandes avec des produits sans famille
+    # **Détecter toutes les commandes sans famille valide**
+    # Une commande est "sans famille" si :
+    # 1. Le produit n'existe pas (LEFT JOIN sans correspondance)
+    # 2. Le produit existe mais n'a aucune famille définie
     commandes_sans_famille = df[
-        df["famille1"].isna() &
-        df["famille2"].isna() &
-        df["famille3"].isna() &
-        df["famille4"].isna()
+        (df["_merge"] == "left_only") |  # Produit inconnu
+        (df["famille1"].isna() & df["famille2"].isna() & df["famille3"].isna() & df["famille4"].isna())
     ]
 
-    # Identifier les produits sans famille dans la table produit
-    produits_sans_famille = df_produits[
-        df_produits["famille1"].isna() &
-        df_produits["famille2"].isna() &
-        df_produits["famille3"].isna() &
-        df_produits["famille4"].isna()
-    ]
+    # **Calculer le CA total des commandes sans famille**
+    ca_sans_famille = commandes_sans_famille["prix_total_ht"].sum()
+    st.write(f"🔍 **CA total des commandes sans famille : {ca_sans_famille:,.2f} €**")
 
-    # Afficher les alertes et exporter les détails
-    if not produits_sans_famille.empty:
-        st.warning(f"⚠️ {len(produits_sans_famille)} produits n'ont aucune famille définie dans la table produit.")
-        export_excel(produits_sans_famille, "produits_sans_famille.xlsx", "download_produits_sans_famille")
-
+    # **Exporter le détail des commandes sans famille**
     if not commandes_sans_famille.empty:
         st.error(f"❌ {len(commandes_sans_famille)} commandes ont un produit sans famille ou un produit inconnu.")
         export_excel(commandes_sans_famille, "commandes_sans_famille.xlsx", "download_commandes_sans_famille")
 
-    # Filtrer pour ne garder que les commandes avec une famille
-    df = df.dropna(subset=["famille1", "famille2", "famille3", "famille4"], how="all")
+    # **Filtrer strictement pour ne garder que les commandes avec une famille valide**
+    df_valide = df[
+        (df["_merge"] == "both") &  # Produit existe
+        (~df["famille1"].isna() | ~df["famille2"].isna() | ~df["famille3"].isna() | ~df["famille4"].isna())
+    ]
 
-    # Déterminer la famille principale
-    df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
-    df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
+    # **Calculer le CA total des commandes valides**
+    ca_valide = df_valide["prix_total_ht"].sum()
+    st.write(f"✅ **CA total des commandes avec famille valide : {ca_valide:,.2f} €**")
 
-    # Sélecteurs persistants pour les familles
+    # **Vérification : la somme des deux CA doit correspondre au CA total des commandes**
+    ca_total_commandes = df_commandes["prix_total_ht"].sum()
+    st.write(f"📊 **CA total des commandes (toutes) : {ca_total_commandes:,.2f} €**")
+
+    # **Vérification de la cohérence**
+    if abs(ca_sans_famille + ca_valide - ca_total_commandes) > 1:
+        st.error("❌ Incohérence détectée : la somme des CA (sans famille + valide) ne correspond pas au CA total des commandes.")
+    else:
+        st.success("✅ Cohérence vérifiée : la somme des CA correspond au CA total des commandes.")
+
+    # Déterminer la famille principale (uniquement sur les données valides)
+    df_valide["famille"] = df_valide["famille4"].fillna(df_valide["famille3"]).fillna(df_valide["famille2"]).fillna(df_valide["famille1"])
+    df_valide["url"] = df_valide["famille4_url"].fillna(df_valide["famille3_url"]).fillna(df_valide["famille2_url"]).fillna(df_valide["famille1_url"])
+
+    # Sélecteurs persistants pour les familles (uniquement sur les données valides)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        choix_f1 = multiselect_persistant("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), "choix_f1")
+        choix_f1 = multiselect_persistant("Famille 1", sorted(df_valide["famille1"].dropna().unique().tolist()), "choix_f1")
     with col2:
-        choix_f2 = multiselect_persistant("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), "choix_f2")
+        choix_f2 = multiselect_persistant("Famille 2", sorted(df_valide["famille2"].dropna().unique().tolist()), "choix_f2")
     with col3:
-        choix_f3 = multiselect_persistant("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), "choix_f3")
+        choix_f3 = multiselect_persistant("Famille 3", sorted(df_valide["famille3"].dropna().unique().tolist()), "choix_f3")
     with col4:
-        choix_f4 = multiselect_persistant("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), "choix_f4")
+        choix_f4 = multiselect_persistant("Famille 4", sorted(df_valide["famille4"].dropna().unique().tolist()), "choix_f4")
 
     if st.button("📥 Générer statistiques"):
-        # Appliquer les filtres
+        # Appliquer les filtres sur les données valides
         if choix_f1:
-            df = df[df["famille1"].isin(choix_f1)]
+            df_valide = df_valide[df_valide["famille1"].isin(choix_f1)]
         if choix_f2:
-            df = df[df["famille2"].isin(choix_f2)]
+            df_valide = df_valide[df_valide["famille2"].isin(choix_f2)]
         if choix_f3:
-            df = df[df["famille3"].isin(choix_f3)]
+            df_valide = df_valide[df_valide["famille3"].isin(choix_f3)]
         if choix_f4:
-            df = df[df["famille4"].isin(choix_f4)]
+            df_valide = df_valide[df_valide["famille4"].isin(choix_f4)]
 
-        # Calculs
-        df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
-        df_grouped = df.groupby(["famille", "url"]).agg(
+        # Calculs (uniquement sur les données valides)
+        df_valide["marge_calc"] = df_valide["prix_total_ht"] - (df_valide["prix_achat"] * df_valide["quantite"])
+        df_grouped = df_valide.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
             marge=("marge_calc", "sum")
         ).reset_index()
         df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
 
+        st.write(f"✅ **CA total des commandes avec famille valide (après filtres) : {df_valide['prix_total_ht'].sum():,.2f} €**")
         st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped)
         export_excel(df_grouped, "stats_famille.xlsx", "download_stats_famille")
