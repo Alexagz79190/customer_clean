@@ -162,19 +162,41 @@ elif page == "Panier Moyen":
 # ==================== PAGE STATISTIQUES FAMILLE ====================
 elif page == "Statistiques Famille":
     st.header("📊 Statistiques par Famille")
-
     if "date_debut_fam" not in st.session_state:
         st.session_state["date_debut_fam"] = datetime.date(2025, 1, 1)
     if "date_fin_fam" not in st.session_state:
         st.session_state["date_fin_fam"] = datetime.date.today()
-
     col1, col2 = st.columns(2)
     with col1:
         date_debut = st.date_input("Date de début", key="date_debut_fam", format="DD/MM/YYYY")
     with col2:
         date_fin = st.date_input("Date de fin", key="date_fin_fam", format="DD/MM/YYYY")
 
+    # Charger les données une fois pour les sélecteurs
+    query = f"""
+    SELECT DISTINCT
+        famille1, famille2, famille3, famille4
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
+    LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
+        ON c.code_produit = p.code
+    WHERE c.date_validation IS NOT NULL
+      AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
+    """
+    df_selecteurs = bq_query(query)
+
+    # Déclarer les sélecteurs ici, avant le bouton
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        choix_f1 = multiselect_persistant("Famille 1", sorted(df_selecteurs["famille1"].dropna().unique().tolist()), "choix_f1")
+    with col2:
+        choix_f2 = multiselect_persistant("Famille 2", sorted(df_selecteurs["famille2"].dropna().unique().tolist()), "choix_f2")
+    with col3:
+        choix_f3 = multiselect_persistant("Famille 3", sorted(df_selecteurs["famille3"].dropna().unique().tolist()), "choix_f3")
+    with col4:
+        choix_f4 = multiselect_persistant("Famille 4", sorted(df_selecteurs["famille4"].dropna().unique().tolist()), "choix_f4")
+
     if st.button("📥 Générer statistiques"):
+        # Recharger les données complètes pour l'analyse
         query = f"""
         SELECT
             c.numero_commande,
@@ -193,20 +215,10 @@ elif page == "Statistiques Famille":
           AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
         """
         df = bq_query(query)
-
         df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
         df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            choix_f1 = multiselect_persistant("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), "choix_f1")
-        with col2:
-            choix_f2 = multiselect_persistant("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), "choix_f2")
-        with col3:
-            choix_f3 = multiselect_persistant("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), "choix_f3")
-        with col4:
-            choix_f4 = multiselect_persistant("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), "choix_f4")
-
+        # Appliquer les filtres
         if choix_f1:
             df = df[df["famille1"].isin(choix_f1)]
         if choix_f2:
@@ -216,12 +228,17 @@ elif page == "Statistiques Famille":
         if choix_f4:
             df = df[df["famille4"].isin(choix_f4)]
 
+        # Calculs et affichage
         df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
         df_grouped = df.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
             marge=("marge_calc", "sum")
         ).reset_index()
         df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
+        st.write(f"✅ {len(df_grouped)} familles analysées")
+        st.dataframe(df_grouped)
+        export_excel(df_grouped, "stats_famille.xlsx")
+
 
         st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped)
