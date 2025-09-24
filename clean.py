@@ -32,17 +32,13 @@ def clean_clients(df: pd.DataFrame) -> pd.DataFrame:
     cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
     return df[cols].dropna(how="any")
 
-def query_panier_moyen(date_min=None, commandes_filtre=None):
+def query_panier_moyen(date_min=None):
     # --- Filtre sur date ---
     if date_min:
+        # convertir au format YYYY-MM-DD pour BigQuery
         date_filter = f"SAFE.PARSE_DATE('%Y-%m-%d', date_validation) >= DATE '{date_min}'"
     else:
         date_filter = "date_validation IS NOT NULL"  # pas de borne, mais exclut les NULL
-
-    # --- Filtre sur commandes ---
-    extra_filter = ""
-    if commandes_filtre:
-        extra_filter = f"AND numero_commande IN ({','.join(map(str, commandes_filtre))})"
 
     QUERY = f"""
     WITH commandes AS (
@@ -54,7 +50,6 @@ def query_panier_moyen(date_min=None, commandes_filtre=None):
         SUM(prix_total_ht) OVER (PARTITION BY numero_commande) AS total_commande
       FROM `{PROJECT_ID}.{DATASET_ID}.commande web_agrizone_commande`
       WHERE {date_filter}
-        {extra_filter}
     )
     SELECT
       c.code_produit,
@@ -136,17 +131,18 @@ if page == "Clients":
 elif page == "Panier Moyen Produits":
     st.header("🛒 Analyse Panier Moyen Produits")
 
-    # Sélecteur de date
-    date_min = st.date_input("Date de début (vide = pas de filtre)", pd.to_datetime("2020-01-01"))
-
-    # Filtre commandes
-    commandes_test = st.text_input("Filtrer par numéros de commande (séparés par ,)", "")
+    # Sélecteur de date (par défaut 01/01/2020)
+    date_min = st.date_input(
+        "Date de début (vide = pas de filtre)",
+        pd.to_datetime("2020-01-01"),
+        format="DD-MM-YYYY"  # 🔹 format affichage %d-%m-%Y
+    )
 
     if st.button("📥 Extraire commandes"):
-        commandes_filtre = [int(x.strip()) for x in commandes_test.split(",") if x.strip().isdigit()]
+        # Si l’utilisateur a choisi une date -> on formate en YYYY-MM-DD pour BigQuery
         date_filter = date_min.strftime("%Y-%m-%d") if date_min else None
 
-        df = query_panier_moyen(date_filter, commandes_filtre if commandes_filtre else None)
+        df = query_panier_moyen(date_filter)
 
         st.success(f"{len(df)} lignes récupérées")
         st.dataframe(df.head(20))
