@@ -190,17 +190,33 @@ elif page == "Statistiques Famille":
         """
         df = bq_query(query)
 
-        # Escalade famille
-        df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
-        df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
+        # Escalade famille (famille4 > famille3 > famille2 > famille1)
+        df["famille"] = (
+            df["famille4"].fillna(df["famille3"])
+            .fillna(df["famille2"])
+            .fillna(df["famille1"])
+        )
+        df["url"] = (
+            df["famille4_url"].fillna(df["famille3_url"])
+            .fillna(df["famille2_url"])
+            .fillna(df["famille1_url"])
+        )
 
-        # Calculs
+        # Calcul marge par ligne
+        df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
+
+        # Agrégation par famille + url
         df_grouped = df.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
-            marge=("prix_total_ht", "sum") - (df["prix_achat"] * df["quantite"]).sum()
+            marge=("marge_calc", "sum")
         ).reset_index()
-        df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
 
-        # Export
+        # % marge
+        df_grouped["%marge"] = (
+            df_grouped["marge"] / df_grouped["ca_total"] * 100
+        ).round(2)
+
+        # Affichage et export
+        st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped.head(20))
         export_excel(df_grouped, "stats_famille.xlsx")
