@@ -121,7 +121,7 @@ def query_commandes(date_min="2020-01-01"):
     """
     return client.query(QUERY).result().to_dataframe()
 
-def query_stats_famille():
+def query_stats_famille(date_min="2025-01-01"):
     QUERY = f"""
     WITH commandes AS (
       SELECT
@@ -136,6 +136,7 @@ def query_stats_famille():
       LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
       WHERE c.date_validation IS NOT NULL
+        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) >= DATE '{date_min}'
     )
     SELECT
       famille_finale,
@@ -184,56 +185,75 @@ if page == "Clients":
 
         export_excel(df_clean, "export_clients_clean.xlsx")
 
-# ==================== PAGE COMMANDES ====================
-elif page == "Commandes":
-    st.header("🛒 Analyse des commandes")
+# ==================== PAGE PANIER MOYEN ====================
+elif page == "Panier moyen":
+    st.header("🛒 Analyse Panier Moyen Produits")
 
-    seuil_ventes = 2
-    seuil_panier_moyen = 250
-    seuil_chiffre_affaire = 180
+    # Sélecteur de date (par défaut 01/01/2020)
+    date_min = st.date_input(
+        "Date de début (vide = pas de filtre)",
+        pd.to_datetime("2020-01-01"),
+        format="DD-MM-YYYY"
+    )
 
-    with st.spinner("Récupération des commandes..."):
-        df_cmd = query_commandes()
+    if st.button("📥 Extraire commandes"):
+        date_filter = date_min.strftime("%Y-%m-%d") if date_min else None
+        with st.spinner("Récupération des commandes..."):
+            df_cmd = query_commandes(date_filter)
 
-    st.write(f"✅ {len(df_cmd)} lignes récupérées")
-    st.dataframe(df_cmd.head(20))
+        st.write(f"✅ {len(df_cmd)} lignes récupérées")
+        st.dataframe(df_cmd.head(20))
 
-    # Filtres
-    filtered = df_cmd[
-        (df_cmd["nb_commandes"] >= seuil_ventes) &
-        (df_cmd["panier_moyen"] >= seuil_panier_moyen) &
-        (df_cmd["ca"] >= seuil_chiffre_affaire)
-    ]
+        # ==================== SEUILS ====================
+        seuil_ventes = 2
+        seuil_panier_moyen = 250
+        seuil_chiffre_affaire = 180
+        # ===============================================
 
-    st.write(f"✅ {len(filtered)} lignes après filtrage")
-    st.dataframe(filtered.head(20))
+        filtered = df_cmd[
+            (df_cmd["nb_commandes"] >= seuil_ventes) &
+            (df_cmd["panier_moyen"] >= seuil_panier_moyen) &
+            (df_cmd["ca"] >= seuil_chiffre_affaire)
+        ]
 
-    # Export complet
-    export_excel(filtered, "commandes_filtrees.xlsx")
+        st.write(f"✅ {len(filtered)} lignes après filtrage")
+        st.dataframe(filtered.head(20))
 
-    # Split par prix de vente
-    sup_800 = filtered[filtered["prix_vente"] > 800]
-    inf_800 = filtered[filtered["prix_vente"] <= 800]
+        export_excel(filtered, "commandes_filtrees.xlsx")
 
-    export_excel(sup_800, "commandes_prix_sup_800.xlsx")
-    export_excel(inf_800, "commandes_prix_inf_800.xlsx")
+        # Split par prix de vente
+        sup_800 = filtered[filtered["prix_vente"] > 800]
+        inf_800 = filtered[filtered["prix_vente"] <= 800]
+
+        export_excel(sup_800, "commandes_prix_sup_800.xlsx")
+        export_excel(inf_800, "commandes_prix_inf_800.xlsx")
 
 # ==================== PAGE STATS FAMILLE ====================
 elif page == "Statistiques par famille":
     st.header("📊 Statistiques par famille de produits")
 
-    with st.spinner("Récupération des statistiques..."):
-        df_stats = query_stats_famille()
-
-    familles = st.multiselect(
-        "Sélectionnez les familles à analyser",
-        options=df_stats["famille_finale"].dropna().unique(),
-        default=[]
+    # Sélecteur de date (par défaut 01/01/2025)
+    date_min = st.date_input(
+        "Date de début (vide = pas de filtre)",
+        pd.to_datetime("2025-01-01"),
+        format="DD-MM-YYYY"
     )
 
-    if familles:
-        df_stats = df_stats[df_stats["famille_finale"].isin(familles)]
+    if st.button("📥 Extraire statistiques"):
+        date_filter = date_min.strftime("%Y-%m-%d") if date_min else None
 
-    st.dataframe(df_stats)
+        with st.spinner("Récupération des statistiques..."):
+            df_stats = query_stats_famille(date_filter)
 
-    export_excel(df_stats, "stats_famille.xlsx")
+        familles = st.multiselect(
+            "Sélectionnez les familles à analyser",
+            options=df_stats["famille_finale"].dropna().unique(),
+            default=[]
+        )
+
+        if familles:
+            df_stats = df_stats[df_stats["famille_finale"].isin(familles)]
+
+        st.dataframe(df_stats)
+
+        export_excel(df_stats, "stats_famille.xlsx")
