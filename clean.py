@@ -19,13 +19,12 @@ creds_dict = st.secrets["gcp_service_account"]
 credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
 client = bigquery.Client(credentials=credentials_gcp, project=creds_dict["project_id"])
 
-
 # ==================== UTILS ====================
 def bq_query(query: str) -> pd.DataFrame:
     job = client.query(query)
     return job.result().to_dataframe()
 
-def export_excel(df: pd.DataFrame, filename: str):
+def export_excel(df: pd.DataFrame, filename: str, key: str):
     """Téléchargement Excel avec séparateur virgule et décimales FR."""
     buffer = io.BytesIO()
     df.to_excel(buffer, index=False, engine="openpyxl")
@@ -35,6 +34,7 @@ def export_excel(df: pd.DataFrame, filename: str):
         data=buffer,
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
     )
 
 def multiselect_persistant(label, options, key):
@@ -45,24 +45,19 @@ def multiselect_persistant(label, options, key):
     st.session_state[key] = selected
     return selected
 
-
 # ==================== MENU ====================
 st.sidebar.title("📑 Menu")
 page = st.sidebar.radio("Navigation", ["Clients", "Panier Moyen", "Statistiques Famille"])
 
-
 # ==================== PAGE CLIENTS ====================
 if page == "Clients":
     st.header("👥 Export Clients")
-
     if st.button("📥 Générer export"):
         query = f"""
         SELECT *
         FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['client']}`
         """
         df = bq_query(query)
-
-        # Nettoyage basique
         df = df.dropna(subset=["email_client"])
         df = df.drop_duplicates(subset=["email_client"])
         df["Email"] = df["email_client"].astype(str).str.strip()
@@ -80,35 +75,28 @@ if page == "Clients":
         digits = df["portable_client"].astype(str).str.replace(r"\D", "", regex=True)
         df["N° de mobile"] = "+33" + digits.str[-9:]
         df = df[df["N° de mobile"].str.len() == 12]
-
         cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
         df_final = df[cols].copy()
         df_final = df_final.replace({r"^\s*$": pd.NA}, regex=True).dropna(how="any")
-
         st.write(f"✅ {len(df_final)} lignes exportées")
         st.dataframe(df_final.head(20))
-        export_excel(df_final, "clients_clean.xlsx")
-
+        export_excel(df_final, "clients_clean.xlsx", "download_clients")
 
 # ==================== PAGE PANIER MOYEN ====================
 elif page == "Panier Moyen":
     st.header("🛒 Analyse Panier Moyen")
-
     if "date_debut_panier" not in st.session_state:
         st.session_state["date_debut_panier"] = datetime.date(2020, 1, 1)
     if "date_fin_panier" not in st.session_state:
         st.session_state["date_fin_panier"] = datetime.date.today()
-
     col1, col2 = st.columns(2)
     with col1:
         st.date_input("Date de début", key="date_debut_panier", format="DD/MM/YYYY")
     with col2:
         st.date_input("Date de fin", key="date_fin_panier", format="DD/MM/YYYY")
-
     seuil_ventes = 2
     seuil_panier_moyen = 250
     seuil_ca = 180
-
     if st.button("📥 Générer analyse"):
         query = f"""
         WITH commandes AS (
@@ -121,7 +109,7 @@ elif page == "Panier Moyen":
             p.libelle,
             p.prix_vente_ht AS prix_vente
           FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-          LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
+          INNER JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
             ON c.code_produit = p.code
           WHERE c.date_validation IS NOT NULL
             AND DATE(c.date_validation) BETWEEN "{st.session_state['date_debut_panier']}" AND "{st.session_state['date_fin_panier']}"
@@ -139,25 +127,20 @@ elif page == "Panier Moyen":
         ORDER BY ca DESC
         """
         df = bq_query(query)
-
         df = df[
             (df["nb_commandes"] >= seuil_ventes)
             & (df["panier_moyen"].astype(float) >= seuil_panier_moyen)
             & (df["ca"].astype(float) >= seuil_ca)
         ]
-
         st.write(f"✅ {len(df)} produits analysés")
         st.dataframe(df.head(20))
-        export_excel(df, "panier_moyen_complet.xlsx")
-
+        export_excel(df, "panier_moyen_complet.xlsx", "download_panier_moyen")
         sup800 = df[df["prix_vente"] > 800]
         if not sup800.empty:
-            export_excel(sup800, "panier_moyen_prix_sup800.xlsx")
-
+            export_excel(sup800, "panier_moyen_prix_sup800.xlsx", "download_panier_sup800")
         inf800 = df[df["prix_vente"] <= 800]
         if not inf800.empty:
-            export_excel(inf800, "panier_moyen_prix_inf_ou_egal800.xlsx")
-
+            export_excel(inf800, "panier_moyen_prix_inf_ou_egal800.xlsx", "download_panier_inf800")
 
 # ==================== PAGE STATISTIQUES FAMILLE ====================
 elif page == "Statistiques Famille":
@@ -172,19 +155,20 @@ elif page == "Statistiques Famille":
     with col2:
         date_fin = st.date_input("Date de fin", key="date_fin_fam", format="DD/MM/YYYY")
 
-    # Charger les données une fois pour les sélecteurs
-    query = f"""
+    # Charger les données pour les sélecteurs
+    query_selecteurs = f"""
     SELECT DISTINCT
-        famille1, famille2, famille3, famille4
+        p.famille1, p.famille2, p.famille3, p.famille4
     FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-    LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
+    INNER JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
     WHERE c.date_validation IS NOT NULL
       AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
+      AND (p.famille1 IS NOT NULL OR p.famille2 IS NOT NULL OR p.famille3 IS NOT NULL OR p.famille4 IS NOT NULL)
     """
-    df_selecteurs = bq_query(query)
+    df_selecteurs = bq_query(query_selecteurs)
 
-    # Déclarer les sélecteurs ici, avant le bouton
+    # Sélecteurs persistants
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         choix_f1 = multiselect_persistant("Famille 1", sorted(df_selecteurs["famille1"].dropna().unique().tolist()), "choix_f1")
@@ -196,7 +180,6 @@ elif page == "Statistiques Famille":
         choix_f4 = multiselect_persistant("Famille 4", sorted(df_selecteurs["famille4"].dropna().unique().tolist()), "choix_f4")
 
     if st.button("📥 Générer statistiques"):
-        # Recharger les données complètes pour l'analyse
         query = f"""
         SELECT
             c.numero_commande,
@@ -209,10 +192,11 @@ elif page == "Statistiques Famille":
             p.famille3, p.famille3_url,
             p.famille4, p.famille4_url
         FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
+        INNER JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
             ON c.code_produit = p.code
         WHERE c.date_validation IS NOT NULL
           AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
+          AND (p.famille1 IS NOT NULL OR p.famille2 IS NOT NULL OR p.famille3 IS NOT NULL OR p.famille4 IS NOT NULL)
         """
         df = bq_query(query)
         df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
@@ -228,7 +212,7 @@ elif page == "Statistiques Famille":
         if choix_f4:
             df = df[df["famille4"].isin(choix_f4)]
 
-        # Calculs et affichage
+        # Calculs
         df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
         df_grouped = df.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
@@ -237,9 +221,4 @@ elif page == "Statistiques Famille":
         df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
         st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped)
-        export_excel(df_grouped, "stats_famille.xlsx")
-
-
-        st.write(f"✅ {len(df_grouped)} familles analysées")
-        st.dataframe(df_grouped)
-        export_excel(df_grouped, "stats_famille.xlsx")
+        export_excel(df_grouped, "stats_famille.xlsx", "download_stats_famille")
