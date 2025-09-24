@@ -4,6 +4,7 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 import io
 import datetime
+import bcrypt
 
 # ==================== CONFIG ====================
 PROJECT_ID = "datalake-380714"
@@ -25,7 +26,7 @@ def bq_query(query: str) -> pd.DataFrame:
     return job.result().to_dataframe()
 
 def export_excel(df: pd.DataFrame, filename: str, key: str):
-    """Téléchargement Excel avec séparateur virgule et décimales FR."""
+    """Téléchargement Excel avec décimales FR."""
     buffer = io.BytesIO()
     df.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
@@ -45,39 +46,65 @@ def multiselect_persistant(label, options, key):
     st.session_state[key] = selected
     return selected
 
+# ==================== LOGIN ====================
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+
+if not st.session_state["logged_in"]:
+    st.title("🔐 Connexion")
+    username = st.text_input("Nom d'utilisateur")
+    password = st.text_input("Mot de passe", type="password")
+
+    if st.button("Se connecter"):
+        valid_users = st.secrets["users"]["usernames"]
+        valid_names = st.secrets["users"]["names"]
+        valid_hashes = st.secrets["users"]["passwords"]
+
+        if username in valid_users:
+            idx = valid_users.index(username)
+            hashed_pwd = valid_hashes[idx]
+            if bcrypt.checkpw(password.encode(), hashed_pwd.encode()):
+                st.session_state["logged_in"] = True
+                st.session_state["name"] = valid_names[idx]
+                st.success(f"Bienvenue {st.session_state['name']} 🎉")
+                st.rerun()
+            else:
+                st.error("Mot de passe incorrect ❌")
+        else:
+            st.error("Utilisateur inconnu ❌")
+    st.stop()
+
 # ==================== MENU ====================
 st.sidebar.title("📑 Menu")
+st.sidebar.write(f"✅ Connecté : {st.session_state['name']}")
 page = st.sidebar.radio("Navigation", ["Clients", "Panier Moyen", "Statistiques Famille"])
+if st.sidebar.button("Se déconnecter"):
+    st.session_state["logged_in"] = False
+    st.rerun()
 
 # ==================== PAGE CLIENTS ====================
 if page == "Clients":
     st.header("👥 Export Clients")
     if st.button("📥 Générer export"):
-        query = f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['client']}`
-        """
+        query = f"SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['client']}`"
         df = bq_query(query)
-        df = df.dropna(subset=["email_client"])
-        df = df.drop_duplicates(subset=["email_client"])
+
+        df = df.dropna(subset=["email_client"]).drop_duplicates(subset=["email_client"])
         df["Email"] = df["email_client"].astype(str).str.strip()
         df["First Name"] = df["prenom_client"].astype(str).str.strip().str.title()
         df["Last Name"] = df["nom_client"].astype(str).str.strip().str.title()
         df["Country"] = df["libelle_lg_pays"].astype(str).str.strip().str[:2].str.upper()
         df["Zip"] = (
             df["code_postal_adr_client"]
-            .astype(str)
-            .str.replace(r"[\s.]", "", regex=True)
-            .str.strip()
-            .str[:5]
+            .astype(str).str.replace(r"[\s.]", "", regex=True).str.strip().str[:5]
         )
         df["Zip"] = df["Zip"].where(df["Zip"].str.fullmatch(r"\d{5}") == True, pd.NA)
         digits = df["portable_client"].astype(str).str.replace(r"\D", "", regex=True)
         df["N° de mobile"] = "+33" + digits.str[-9:]
         df = df[df["N° de mobile"].str.len() == 12]
         cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
-        df_final = df[cols].copy()
-        df_final = df_final.replace({r"^\s*$": pd.NA}, regex=True).dropna(how="any")
+        df_final = df[cols].copy().replace({r"^\s*$": pd.NA}, regex=True).dropna(how="any")
+
         st.write(f"✅ {len(df_final)} lignes exportées")
         st.dataframe(df_final.head(20))
         export_excel(df_final, "clients_clean.xlsx", "download_clients")
@@ -94,9 +121,11 @@ elif page == "Panier Moyen":
         st.date_input("Date de début", key="date_debut_panier", format="DD/MM/YYYY")
     with col2:
         st.date_input("Date de fin", key="date_fin_panier", format="DD/MM/YYYY")
+
     seuil_ventes = 2
     seuil_panier_moyen = 250
     seuil_ca = 180
+
     if st.button("📥 Générer analyse"):
         query = f"""
         WITH commandes AS (
@@ -146,7 +175,6 @@ elif page == "Panier Moyen":
 elif page == "Statistiques Famille":
     st.header("📊 Statistiques par Famille")
 
-    # Dates
     if "date_debut_fam" not in st.session_state:
         st.session_state["date_debut_fam"] = datetime.date(2025, 1, 1)
     if "date_fin_fam" not in st.session_state:
@@ -157,7 +185,6 @@ elif page == "Statistiques Famille":
     with col2:
         date_fin = st.date_input("Date de fin", key="date_fin_fam", format="DD/MM/YYYY")
 
-    # Charger les données des commandes et des produits séparément
     query_commandes = f"""
     SELECT
         numero_commande,
@@ -184,71 +211,43 @@ elif page == "Statistiques Famille":
     """
     df_produits = bq_query(query_produits)
 
-    # Jointure avec pandas (LEFT JOIN pour détecter les commandes sans famille)
     df = pd.merge(
-        df_commandes,
-        df_produits,
-        left_on="code_produit",
-        right_on="code",
-        how="left",
-        indicator=True
+        df_commandes, df_produits,
+        left_on="code_produit", right_on="code",
+        how="left", indicator=True
     )
 
-    # **Détecter toutes les commandes sans famille valide**
-    # Une commande est "sans famille" si :
-    # 1. Le produit n'existe pas (LEFT JOIN sans correspondance)
-    # 2. Le produit existe mais n'a aucune famille définie
+    # Détection commandes sans famille
     commandes_sans_famille = df[
-        (df["_merge"] == "left_only") |  # Produit inconnu
-        (df["famille1"].isna() & df["famille2"].isna() & df["famille3"].isna() & df["famille4"].isna())
+        (df["_merge"] == "left_only")
+        | (df[["famille1", "famille2", "famille3", "famille4"]].isna().all(axis=1))
     ]
-
-    # **Calculer le CA total des commandes sans famille**
     ca_sans_famille = commandes_sans_famille["prix_total_ht"].sum()
-    st.write(f"🔍 **CA total des commandes sans famille : {ca_sans_famille:,.2f} €**")
-
-    # **Exporter le détail des commandes sans famille**
     if not commandes_sans_famille.empty:
-        st.error(f"❌ {len(commandes_sans_famille)} commandes ont un produit sans famille ou un produit inconnu.")
-        export_excel(commandes_sans_famille, "commandes_sans_famille.xlsx", "download_commandes_sans_famille")
+        st.error(f"❌ {len(commandes_sans_famille)} commandes sans famille → {ca_sans_famille:,.2f} €")
+        export_excel(commandes_sans_famille, "commandes_sans_famille.xlsx", "download_sans_famille")
 
-    # **Filtrer strictement pour ne garder que les commandes avec une famille valide**
-    df_valide = df[
-        (df["_merge"] == "both") &  # Produit existe
-        (~df["famille1"].isna() | ~df["famille2"].isna() | ~df["famille3"].isna() | ~df["famille4"].isna())
-    ]
+    df_valide = df[df["_merge"] == "both"].copy()
+    df_valide["famille"] = (
+        df_valide["famille4"].fillna(df_valide["famille3"])
+        .fillna(df_valide["famille2"]).fillna(df_valide["famille1"])
+    )
+    df_valide["url"] = (
+        df_valide["famille4_url"].fillna(df_valide["famille3_url"])
+        .fillna(df_valide["famille2_url"]).fillna(df_valide["famille1_url"])
+    )
 
-    # **Calculer le CA total des commandes valides**
-    ca_valide = df_valide["prix_total_ht"].sum()
-    st.write(f"✅ **CA total des commandes avec famille valide : {ca_valide:,.2f} €**")
-
-    # **Vérification : la somme des deux CA doit correspondre au CA total des commandes**
-    ca_total_commandes = df_commandes["prix_total_ht"].sum()
-    st.write(f"📊 **CA total des commandes (toutes) : {ca_total_commandes:,.2f} €**")
-
-    # **Vérification de la cohérence**
-    if abs(ca_sans_famille + ca_valide - ca_total_commandes) > 1:
-        st.error("❌ Incohérence détectée : la somme des CA (sans famille + valide) ne correspond pas au CA total des commandes.")
-    else:
-        st.success("✅ Cohérence vérifiée : la somme des CA correspond au CA total des commandes.")
-
-    # Déterminer la famille principale (uniquement sur les données valides)
-    df_valide["famille"] = df_valide["famille4"].fillna(df_valide["famille3"]).fillna(df_valide["famille2"]).fillna(df_valide["famille1"])
-    df_valide["url"] = df_valide["famille4_url"].fillna(df_valide["famille3_url"]).fillna(df_valide["famille2_url"]).fillna(df_valide["famille1_url"])
-
-    # Sélecteurs persistants pour les familles (uniquement sur les données valides)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        choix_f1 = multiselect_persistant("Famille 1", sorted(df_valide["famille1"].dropna().unique().tolist()), "choix_f1")
+        choix_f1 = multiselect_persistant("Famille 1", sorted(df_valide["famille1"].dropna().unique()), "choix_f1")
     with col2:
-        choix_f2 = multiselect_persistant("Famille 2", sorted(df_valide["famille2"].dropna().unique().tolist()), "choix_f2")
+        choix_f2 = multiselect_persistant("Famille 2", sorted(df_valide["famille2"].dropna().unique()), "choix_f2")
     with col3:
-        choix_f3 = multiselect_persistant("Famille 3", sorted(df_valide["famille3"].dropna().unique().tolist()), "choix_f3")
+        choix_f3 = multiselect_persistant("Famille 3", sorted(df_valide["famille3"].dropna().unique()), "choix_f3")
     with col4:
-        choix_f4 = multiselect_persistant("Famille 4", sorted(df_valide["famille4"].dropna().unique().tolist()), "choix_f4")
+        choix_f4 = multiselect_persistant("Famille 4", sorted(df_valide["famille4"].dropna().unique()), "choix_f4")
 
     if st.button("📥 Générer statistiques"):
-        # Appliquer les filtres sur les données valides
         if choix_f1:
             df_valide = df_valide[df_valide["famille1"].isin(choix_f1)]
         if choix_f2:
@@ -258,7 +257,6 @@ elif page == "Statistiques Famille":
         if choix_f4:
             df_valide = df_valide[df_valide["famille4"].isin(choix_f4)]
 
-        # Calculs (uniquement sur les données valides)
         df_valide["marge_calc"] = df_valide["prix_total_ht"] - (df_valide["prix_achat"] * df_valide["quantite"])
         df_grouped = df_valide.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
@@ -266,7 +264,6 @@ elif page == "Statistiques Famille":
         ).reset_index()
         df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
 
-        st.write(f"✅ **CA total des commandes avec famille valide (après filtres) : {df_valide['prix_total_ht'].sum():,.2f} €**")
         st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped)
         export_excel(df_grouped, "stats_famille.xlsx", "download_stats_famille")
