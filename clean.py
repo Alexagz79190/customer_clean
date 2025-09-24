@@ -103,6 +103,12 @@ if not st.session_state["logged_in"]:
 st.sidebar.title(f"Bienvenue {st.session_state['name']} 🎉")
 page = st.sidebar.radio("Navigation", ["Clients", "Panier moyen", "Statistiques Famille"])
 
+# Bouton de déconnexion
+if st.sidebar.button("🚪 Se déconnecter"):
+    st.session_state["logged_in"] = False
+    st.session_state.clear()  # pour vider tout l'état (filtres, sessions…)
+    st.rerun()
+
 # ==================== PAGE CLIENTS ====================
 if page == "Clients":
     st.header("👥 Nettoyage Clients")
