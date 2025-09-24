@@ -1,24 +1,82 @@
 import streamlit as st
 import pandas as pd
-from google.cloud import bigquery
-from google.oauth2 import service_account
 import io
 import bcrypt
+from google.cloud import bigquery
+from google.oauth2 import service_account
 
-st.title("🔐 Portail sécurisé - Export BigQuery")
+# ==================== AUTH GCP ====================
+creds_dict = st.secrets["gcp_service_account"]
+credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
+client = bigquery.Client(credentials=credentials_gcp, project=creds_dict["project_id"])
 
-# ==================== LOGIN MAISON ====================
+# ==================== CONFIG ====================
+PROJECT_ID = "datalake-380714"
+DATASET_ID = "pole_agri"
+
+# ==================== FONCTIONS ====================
+def clean_clients(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.dropna(subset=["email_client"]).drop_duplicates(subset=["email_client"])
+    df["Email"] = df["email_client"].astype(str).str.strip()
+    df["First Name"] = df["prenom_client"].astype(str).str.strip().str.title()
+    df["Last Name"] = df["nom_client"].astype(str).str.strip().str.title()
+    df["Country"] = df["libelle_lg_pays"].astype(str).str.strip().str[:2].str.upper()
+    df["Zip"] = (
+        df["code_postal_adr_client"].astype(str)
+        .str.replace(r"[\s.]", "", regex=True).str.strip().str[:5]
+    )
+    df["Zip"] = df["Zip"].where(df["Zip"].str.fullmatch(r"\d{5}") == True, pd.NA)
+    digits = df["portable_client"].astype(str).str.replace(r"\D", "", regex=True)
+    df["N° de mobile"] = "+33" + digits.str[-9:]
+    df = df[df["N° de mobile"].str.len() == 12]
+    cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
+    return df[cols].dropna(how="any")
+
+def query_panier_moyen(commandes_filtre=None):
+    extra_filter = ""
+    if commandes_filtre:
+        extra_filter = f"AND numero_commande IN ({','.join(map(str, commandes_filtre))})"
+
+    QUERY = f"""
+    WITH commandes AS (
+      SELECT
+        numero_commande,
+        code_produit,
+        quantite,
+        prix_total_ht,
+        SUM(prix_total_ht) OVER (PARTITION BY numero_commande) AS total_commande
+      FROM `{PROJECT_ID}.{DATASET_ID}.commande web_agrizone_commande`
+      WHERE SAFE.PARSE_DATE('%Y-%m-%d', date_validation) > DATE '2020-12-31'
+        AND date_validation IS NOT NULL
+        {extra_filter}
+    )
+    SELECT
+      c.code_produit,
+      p.libelle AS libelle_produit,
+      COALESCE(NULLIF(p.famille4, ''), NULLIF(p.famille3, ''), NULLIF(p.famille2, ''), p.famille1) AS famille_finale,
+      p.prix_vente_ht AS prix_vente,
+      COUNT(DISTINCT c.numero_commande) AS nb_commandes,
+      SUM(c.quantite) AS quantite_totale,
+      SUM(c.prix_total_ht) AS chiffre_affaire,
+      ROUND(SUM(c.total_commande) / COUNT(DISTINCT c.numero_commande), 2) AS panier_moyen
+    FROM commandes c
+    LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.produit web_agrizone_produit_description` p
+      ON c.code_produit = p.code
+    GROUP BY c.code_produit, libelle_produit, famille_finale, prix_vente
+    """
+    return client.query(QUERY).result().to_dataframe()
+
+# ==================== LOGIN ====================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
 if not st.session_state["logged_in"]:
-    st.subheader("Connexion requise")
+    st.title("🔐 Connexion requise")
 
     username = st.text_input("Nom d'utilisateur")
     password = st.text_input("Mot de passe", type="password")
 
     if st.button("Se connecter"):
-        # Récupérer les comptes depuis secrets.toml
         valid_users = st.secrets["users"]["usernames"]
         valid_names = st.secrets["users"]["names"]
         valid_hashes = st.secrets["users"]["passwords"]
@@ -31,7 +89,7 @@ if not st.session_state["logged_in"]:
                 st.session_state["logged_in"] = True
                 st.session_state["name"] = valid_names[idx]
                 st.success(f"Bienvenue {st.session_state['name']} 🎉")
-                st.rerun()  # ✅ rerun propre
+                st.rerun()
             else:
                 st.error("Mot de passe incorrect ❌")
         else:
@@ -39,84 +97,89 @@ if not st.session_state["logged_in"]:
 
     st.stop()
 
-# ==================== SI LOGIN OK ====================
-st.success(f"Connecté en tant que {st.session_state['name']} ✅")
+# ==================== APP MULTIPAGE ====================
+st.sidebar.title(f"Bienvenue {st.session_state['name']} 👋")
+page = st.sidebar.radio("Navigation", ["Clients", "Panier Moyen Produits"])
 
-# Bouton de déconnexion
-if st.button("Se déconnecter"):
+if st.sidebar.button("Se déconnecter"):
     st.session_state["logged_in"] = False
     st.rerun()
 
-# ==================== BIGQUERY ====================
-PROJECT_ID = "datalake-380714"
-DATASET_ID = "pole_agri"
-TABLE_WITH_SPACE = "client web_agrizone_client"
-ROW_LIMIT = 0  # 0 = pas de limite
-
-creds_dict = st.secrets["gcp_service_account"]
-credentials_gcp = service_account.Credentials.from_service_account_info(creds_dict)
-client = bigquery.Client(credentials=credentials_gcp, project=creds_dict["project_id"])
-
-def bq_to_dataframe(row_limit=None) -> pd.DataFrame:
-    table_fqn = f"`{PROJECT_ID}.{DATASET_ID}.{TABLE_WITH_SPACE}`"
-    query = f"SELECT * FROM {table_fqn}"
-    if row_limit and row_limit > 0:
-        query += f" LIMIT {int(row_limit)}"
-    job = client.query(query)
-    return job.result().to_dataframe()
-
-def clean_clients(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.dropna(subset=["email_client"])
-    df = df.drop_duplicates(subset=["email_client"])
-
-    df["Email"] = df["email_client"].astype(str).str.strip()
-    df["First Name"] = df["prenom_client"].astype(str).str.strip().str.title()
-    df["Last Name"] = df["nom_client"].astype(str).str.strip().str.title()
-    df["Country"] = df["libelle_lg_pays"].astype(str).str.strip().str[:2].str.upper()
-
-    df["Zip"] = (
-        df["code_postal_adr_client"]
-        .astype(str)
-        .str.replace(r"[\s.]", "", regex=True)
-        .str.strip()
-        .str[:5]
-    )
-    df["Zip"] = df["Zip"].where(df["Zip"].str.fullmatch(r"\d{5}") == True, pd.NA)
-
-    digits = df["portable_client"].astype(str).str.replace(r"\D", "", regex=True)
-    df["N° de mobile"] = "+33" + digits.str[-9:]
-    df = df[df["N° de mobile"].str.len() == 12]
-
-    cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
-    df_final = df[cols].copy()
-
-    for c in cols:
-        df_final.loc[:, c] = df_final[c].astype("string").str.strip()
-    df_final = df_final.replace({r"^\s*$": pd.NA}, regex=True)
-    df_final = df_final.replace({"nan": pd.NA, "None": pd.NA})
-    df_final = df_final.dropna(how="any")
-
-    return df_final
-
-# ==================== INTERFACE ====================
-if st.button("📥 Extraire et nettoyer les données BigQuery"):
-    with st.spinner("Connexion à BigQuery..."):
-        df_raw = bq_to_dataframe(ROW_LIMIT or None)
-    st.write(f"✅ Données brutes : {len(df_raw)} lignes")
-    st.dataframe(df_raw.head(20))
-
-    with st.spinner("Nettoyage des données..."):
+# ---------- PAGE CLIENTS ----------
+if page == "Clients":
+    st.header("📧 Export Clients")
+    if st.button("📥 Extraire et nettoyer les clients"):
+        df_raw = client.query(
+            f"SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.client web_agrizone_client`"
+        ).result().to_dataframe()
         df_clean = clean_clients(df_raw)
-    st.write(f"✅ Données nettoyées : {len(df_clean)} lignes")
-    st.dataframe(df_clean.head(20))
+        st.success(f"{len(df_clean)} clients nettoyés")
+        st.dataframe(df_clean.head(20))
 
-    # Export Excel
-    buffer = io.BytesIO()
-    df_clean.to_excel(buffer, index=False, engine="openpyxl")
-    buffer.seek(0)
-    st.download_button(
-        label="⬇️ Télécharger le fichier Excel",
-        data=buffer,
-        file_name="export_clients_clean.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+        buffer = io.BytesIO()
+        df_clean.to_excel(buffer, index=False, engine="openpyxl")
+        buffer.seek(0)
+        st.download_button(
+            "⬇️ Télécharger Clients",
+            data=buffer,
+            file_name="clients_clean.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+# ---------- PAGE PANIER MOYEN ----------
+elif page == "Panier Moyen Produits":
+    st.header("🛒 Analyse Panier Moyen Produits")
+
+    commandes_test = st.text_input("Filtrer par numéros de commande (séparés par ,)", "")
+
+    if st.button("📥 Extraire commandes"):
+        commandes_filtre = [int(x.strip()) for x in commandes_test.split(",") if x.strip().isdigit()]
+        df = query_panier_moyen(commandes_filtre if commandes_filtre else None)
+
+        st.success(f"{len(df)} lignes récupérées")
+        st.dataframe(df.head(20))
+
+        seuil_ventes = 2
+        seuil_panier_moyen = 250
+        seuil_chiffre_affaire = 180
+
+        df_filtered = df[
+            (df["nb_commandes"] >= seuil_ventes) &
+            (df["panier_moyen"] >= seuil_panier_moyen) &
+            (df["chiffre_affaire"] >= seuil_chiffre_affaire)
+        ]
+
+        # Export principal
+        buffer = io.BytesIO()
+        df_filtered.to_excel(buffer, index=False, engine="openpyxl")
+        buffer.seek(0)
+        st.download_button(
+            "⬇️ Télécharger résultats filtrés",
+            data=buffer,
+            file_name="resultats_paniers_eleves.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        # Sup à 800
+        df_sup = df_filtered[df_filtered["prix_vente"] > 800]
+        buf_sup = io.BytesIO()
+        df_sup.to_excel(buf_sup, index=False, engine="openpyxl")
+        buf_sup.seek(0)
+        st.download_button(
+            "⬇️ Résultats prix_vente > 800",
+            data=buf_sup,
+            file_name="resultats_prix_vente_superieur_800.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        # Inf ou égal à 800
+        df_inf = df_filtered[df_filtered["prix_vente"] <= 800]
+        buf_inf = io.BytesIO()
+        df_inf.to_excel(buf_inf, index=False, engine="openpyxl")
+        buf_inf.seek(0)
+        st.download_button(
+            "⬇️ Résultats prix_vente <= 800",
+            data=buf_inf,
+            file_name="resultats_prix_vente_inferieur_ou_egal_800.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
