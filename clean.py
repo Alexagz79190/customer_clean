@@ -175,9 +175,11 @@ elif page == "Statistiques Famille":
         SELECT
             c.numero_commande,
             c.date_validation,
+            c.code_produit,
             c.quantite,
             c.prix_total_ht,
             c.prix_achat,
+            p.code,
             p.famille1, p.famille1_url,
             p.famille2, p.famille2_url,
             p.famille3, p.famille3_url,
@@ -190,7 +192,17 @@ elif page == "Statistiques Famille":
         """
         df = bq_query(query)
 
-        # Escalade famille (famille4 > famille3 > famille2 > famille1)
+        # 🔹 Normaliser les clés
+        df["code_produit"] = df["code_produit"].astype(str).str.strip()
+        df["code"] = df["code"].astype(str).str.strip()
+
+        # 🔹 Nettoyer familles vides
+        for col in ["famille1", "famille2", "famille3", "famille4"]:
+            df[col] = df[col].replace("", pd.NA).replace(" ", pd.NA)
+        for col in ["famille1_url", "famille2_url", "famille3_url", "famille4_url"]:
+            df[col] = df[col].replace("", pd.NA).replace(" ", pd.NA)
+
+        # 🔹 Escalade famille (famille4 > famille3 > famille2 > famille1)
         df["famille"] = (
             df["famille4"].fillna(df["famille3"])
             .fillna(df["famille2"])
@@ -202,21 +214,28 @@ elif page == "Statistiques Famille":
             .fillna(df["famille1_url"])
         )
 
-        # Calcul marge par ligne
+        # 🔍 Diagnostic commandes sans famille
+        df_sans_fam = df[df["famille"].isna()]
+        if not df_sans_fam.empty:
+            ca_sans_fam = df_sans_fam["prix_total_ht"].sum()
+            st.error(f"❌ {len(df_sans_fam)} commandes sans famille. CA = {ca_sans_fam:,.2f} €")
+            st.write("👉 Exemples de codes produits sans famille :")
+            st.dataframe(df_sans_fam[["code_produit"]].drop_duplicates().head(20))
+            export_excel(df_sans_fam, "commandes_sans_famille.xlsx")
+        else:
+            st.success("✅ Toutes les commandes ont une famille après escalade.")
+
+        # 🔹 Calcul marge
         df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
 
-        # Agrégation par famille + url
+        # 🔹 Agrégation
         df_grouped = df.groupby(["famille", "url"]).agg(
             ca_total=("prix_total_ht", "sum"),
             marge=("marge_calc", "sum")
         ).reset_index()
+        df_grouped["%marge"] = (df_grouped["marge"] / df_grouped["ca_total"] * 100).round(2)
 
-        # % marge
-        df_grouped["%marge"] = (
-            df_grouped["marge"] / df_grouped["ca_total"] * 100
-        ).round(2)
-
-        # Affichage et export
+        # Résultats
         st.write(f"✅ {len(df_grouped)} familles analysées")
         st.dataframe(df_grouped.head(20))
         export_excel(df_grouped, "stats_famille.xlsx")
