@@ -175,24 +175,14 @@ elif page == "Statistiques Famille":
     query_produits = f"""
     SELECT
         code,
+        libelle,
         famille1, famille1_url,
         famille2, famille2_url,
         famille3, famille3_url,
         famille4, famille4_url
     FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}`
-    WHERE famille1 IS NOT NULL OR famille2 IS NOT NULL OR famille3 IS NOT NULL OR famille4 IS NOT NULL
     """
     df_produits = bq_query(query_produits)
-
-    # Vérification des produits sans famille dans la table produit
-    produits_sans_famille = df_produits[
-        df_produits["famille1"].isna() &
-        df_produits["famille2"].isna() &
-        df_produits["famille3"].isna() &
-        df_produits["famille4"].isna()
-    ]
-    if not produits_sans_famille.empty:
-        st.warning(f"⚠️ {len(produits_sans_famille)} produits n'ont aucune famille définie dans la table produit.")
 
     # Jointure avec pandas
     df = pd.merge(
@@ -200,18 +190,36 @@ elif page == "Statistiques Famille":
         df_produits,
         left_on="code_produit",
         right_on="code",
-        how="inner"  # On ne garde que les commandes avec un produit valide
+        how="left"  # On garde toutes les commandes, même si le produit n'existe pas ou n'a pas de famille
     )
 
-    # Vérification des commandes sans famille après jointure
+    # Identifier les commandes avec des produits sans famille
     commandes_sans_famille = df[
         df["famille1"].isna() &
         df["famille2"].isna() &
         df["famille3"].isna() &
         df["famille4"].isna()
     ]
+
+    # Identifier les produits sans famille dans la table produit
+    produits_sans_famille = df_produits[
+        df_produits["famille1"].isna() &
+        df_produits["famille2"].isna() &
+        df_produits["famille3"].isna() &
+        df_produits["famille4"].isna()
+    ]
+
+    # Afficher les alertes et exporter les détails
+    if not produits_sans_famille.empty:
+        st.warning(f"⚠️ {len(produits_sans_famille)} produits n'ont aucune famille définie dans la table produit.")
+        export_excel(produits_sans_famille, "produits_sans_famille.xlsx", "download_produits_sans_famille")
+
     if not commandes_sans_famille.empty:
-        st.error(f"❌ {len(commandes_sans_famille)} commandes ont un produit sans famille. Vérifiez les codes produits suivants : {commandes_sans_famille['code_produit'].unique()}")
+        st.error(f"❌ {len(commandes_sans_famille)} commandes ont un produit sans famille ou un produit inconnu.")
+        export_excel(commandes_sans_famille, "commandes_sans_famille.xlsx", "download_commandes_sans_famille")
+
+    # Filtrer pour ne garder que les commandes avec une famille
+    df = df.dropna(subset=["famille1", "famille2", "famille3", "famille4"], how="all")
 
     # Déterminer la famille principale
     df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
