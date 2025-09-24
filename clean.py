@@ -185,7 +185,7 @@ if page == "Clients":
 
         export_excel(df_clean, "export_clients_clean.xlsx")
 
-# ==================== PAGE PANIER MOYEN ====================
+# ==================== PAGE COMMANDE ====================
 elif page == "Panier moyen":
     st.header("🛒 Analyse Panier Moyen Produits")
 
