@@ -212,7 +212,6 @@ elif page == "Panier moyen":
         export_excel(inf_800, "commandes_prix_inf_800.xlsx")
 
 # ==================== PAGE STATS FAMILLE ====================
-import datetime
 
 elif page == "Statistiques par famille":
     st.header("📊 Statistiques par famille de produits")
