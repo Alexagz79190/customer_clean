@@ -4,6 +4,7 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 import io
 import bcrypt
+import datetime
 
 # ==================== CONFIG ====================
 PROJECT_ID = "datalake-380714"
@@ -119,7 +120,10 @@ def query_commandes(date_min="2020-01-01"):
     """
     return client.query(QUERY).result().to_dataframe()
 
-def query_stats_famille(date_min="2025-01-01"):
+def query_stats_famille(date_min="2025-01-01", date_max=None):
+    if not date_max:
+        date_max = datetime.date.today().strftime("%Y-%m-%d")
+
     QUERY = f"""
     WITH commandes AS (
       SELECT
@@ -134,7 +138,7 @@ def query_stats_famille(date_min="2025-01-01"):
       LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
       WHERE c.date_validation IS NOT NULL
-        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) >= DATE('{date_min}')
+        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) BETWEEN DATE('{date_min}') AND DATE('{date_max}')
     )
     SELECT
       famille_finale,
@@ -147,17 +151,6 @@ def query_stats_famille(date_min="2025-01-01"):
     ORDER BY ca DESC
     """
     return client.query(QUERY).result().to_dataframe()
-
-def export_excel(df, filename):
-    buffer = io.BytesIO()
-    df.to_excel(buffer, index=False, engine="openpyxl")
-    buffer.seek(0)
-    st.download_button(
-        label=f"⬇️ Télécharger {filename}",
-        data=buffer,
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
 
 # ==================== NAVIGATION ====================
 st.sidebar.title("📂 Menu")
@@ -221,28 +214,38 @@ elif page == "Panier moyen":
 elif page == "Statistiques par famille":
     st.header("📊 Statistiques par famille de produits")
 
-    date_min = st.date_input(
-        "Date de début (vide = pas de filtre)",
-        pd.to_datetime("2025-01-01"),
+    # Plage de dates : par défaut du 01/01/2025 à aujourd'hui
+    today = datetime.date.today()
+    date_range = st.date_input(
+        "Plage de dates",
+        value=(datetime.date(2025, 1, 1), today),
         format="DD-MM-YYYY"
     )
 
     if st.button("📥 Extraire statistiques"):
-        date_filter = date_min.strftime("%Y-%m-%d") if date_min else None
+        date_min = date_range[0].strftime("%Y-%m-%d")
+        date_max = date_range[1].strftime("%Y-%m-%d")
+
         with st.spinner("Récupération des statistiques..."):
-            df_stats = query_stats_famille(date_filter)
+            df_stats = query_stats_famille(date_min, date_max)
+
+        # Sauvegarder dans session_state pour éviter de recharger
+        st.session_state["df_stats"] = df_stats
+
+    if "df_stats" in st.session_state:
+        df_stats = st.session_state["df_stats"]
 
         familles = st.multiselect(
             "Sélectionnez les familles à analyser",
-            options=df_stats["famille_finale"].dropna().unique(),
-            default=[]
+            options=df_stats["famille_finale"].dropna().unique().tolist()
         )
-        if familles:
-            df_stats = df_stats[df_stats["famille_finale"].isin(familles)]
 
-        st.dataframe(df_stats)
+        df_filtered = df_stats[df_stats["famille_finale"].isin(familles)] if familles else df_stats
 
-        df_export = df_stats.copy()
+        st.dataframe(df_filtered)
+
+        df_export = df_filtered.copy()
         for col in ["ca", "marge", "pct_marge"]:
             df_export[col] = df_export[col].round(2).map(lambda x: str(x).replace(".", ","))
+
         export_excel(df_export, "stats_famille.xlsx")
