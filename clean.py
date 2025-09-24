@@ -164,10 +164,27 @@ elif page == "Panier Moyen":
 # ==================== PAGE STATISTIQUES FAMILLE ====================
 elif page == "Statistiques Famille":
     st.header("📊 Statistiques par Famille")
-    date_debut = st.date_input("Date de début", value=datetime.date(2025, 1, 1))
-    date_fin = st.date_input("Date de fin", value=datetime.date.today())
 
+    # --- Gestion des dates dans session_state ---
+    if "date_debut_fam" not in st.session_state:
+        st.session_state["date_debut_fam"] = datetime.date(2025, 1, 1)
+    if "date_fin_fam" not in st.session_state:
+        st.session_state["date_fin_fam"] = datetime.date.today()
+
+    col_date1, col_date2 = st.columns(2)
+    with col_date1:
+        date_debut = st.date_input("Date de début", value=st.session_state["date_debut_fam"], key="date_debut_fam")
+    with col_date2:
+        date_fin = st.date_input("Date de fin", value=st.session_state["date_fin_fam"], key="date_fin_fam")
+
+    # --- Bouton génération ---
     if st.button("📥 Générer statistiques"):
+        # Conversion format français pour affichage
+        date_debut_str = date_debut.strftime("%d/%m/%Y")
+        date_fin_str = date_fin.strftime("%d/%m/%Y")
+
+        st.info(f"📅 Période sélectionnée : du {date_debut_str} au {date_fin_str}")
+
         query = f"""
         SELECT
             c.numero_commande,
@@ -191,16 +208,16 @@ elif page == "Statistiques Famille":
         df["famille"] = df["famille4"].fillna(df["famille3"]).fillna(df["famille2"]).fillna(df["famille1"])
         df["url"] = df["famille4_url"].fillna(df["famille3_url"]).fillna(df["famille2_url"]).fillna(df["famille1_url"])
 
-        # Filtres multi-niveaux
+        # --- Filtres multi-niveaux avec session_state ---
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            filtre_f1 = st.multiselect("Famille 1", sorted(df["famille1"].dropna().unique().tolist()))
+            filtre_f1 = st.multiselect("Famille 1", sorted(df["famille1"].dropna().unique().tolist()), key="f1")
         with col2:
-            filtre_f2 = st.multiselect("Famille 2", sorted(df["famille2"].dropna().unique().tolist()))
+            filtre_f2 = st.multiselect("Famille 2", sorted(df["famille2"].dropna().unique().tolist()), key="f2")
         with col3:
-            filtre_f3 = st.multiselect("Famille 3", sorted(df["famille3"].dropna().unique().tolist()))
+            filtre_f3 = st.multiselect("Famille 3", sorted(df["famille3"].dropna().unique().tolist()), key="f3")
         with col4:
-            filtre_f4 = st.multiselect("Famille 4", sorted(df["famille4"].dropna().unique().tolist()))
+            filtre_f4 = st.multiselect("Famille 4", sorted(df["famille4"].dropna().unique().tolist()), key="f4")
 
         if filtre_f1:
             df = df[df["famille1"].isin(filtre_f1)]
@@ -221,3 +238,4 @@ elif page == "Statistiques Famille":
 
         st.dataframe(df_grouped.head(20))
         export_excel(df_grouped, "stats_famille.xlsx")
+
