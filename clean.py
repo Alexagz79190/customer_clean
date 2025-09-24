@@ -32,7 +32,14 @@ def clean_clients(df: pd.DataFrame) -> pd.DataFrame:
     cols = ["Email", "First Name", "Last Name", "Country", "Zip", "N° de mobile"]
     return df[cols].dropna(how="any")
 
-def query_panier_moyen(commandes_filtre=None):
+def query_panier_moyen(date_min=None, commandes_filtre=None):
+    # --- Filtre sur date ---
+    if date_min:
+        date_filter = f"SAFE.PARSE_DATE('%Y-%m-%d', date_validation) >= DATE '{date_min}'"
+    else:
+        date_filter = "date_validation IS NOT NULL"  # pas de borne, mais exclut les NULL
+
+    # --- Filtre sur commandes ---
     extra_filter = ""
     if commandes_filtre:
         extra_filter = f"AND numero_commande IN ({','.join(map(str, commandes_filtre))})"
@@ -46,8 +53,7 @@ def query_panier_moyen(commandes_filtre=None):
         prix_total_ht,
         SUM(prix_total_ht) OVER (PARTITION BY numero_commande) AS total_commande
       FROM `{PROJECT_ID}.{DATASET_ID}.commande web_agrizone_commande`
-      WHERE SAFE.PARSE_DATE('%Y-%m-%d', date_validation) > DATE '2020-12-31'
-        AND date_validation IS NOT NULL
+      WHERE {date_filter}
         {extra_filter}
     )
     SELECT
@@ -130,11 +136,17 @@ if page == "Clients":
 elif page == "Panier Moyen Produits":
     st.header("🛒 Analyse Panier Moyen Produits")
 
+    # Sélecteur de date
+    date_min = st.date_input("Date de début (vide = pas de filtre)", pd.to_datetime("2020-01-01"))
+
+    # Filtre commandes
     commandes_test = st.text_input("Filtrer par numéros de commande (séparés par ,)", "")
 
     if st.button("📥 Extraire commandes"):
         commandes_filtre = [int(x.strip()) for x in commandes_test.split(",") if x.strip().isdigit()]
-        df = query_panier_moyen(commandes_filtre if commandes_filtre else None)
+        date_filter = date_min.strftime("%Y-%m-%d") if date_min else None
+
+        df = query_panier_moyen(date_filter, commandes_filtre if commandes_filtre else None)
 
         st.success(f"{len(df)} lignes récupérées")
         st.dataframe(df.head(20))
