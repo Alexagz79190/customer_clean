@@ -5,7 +5,7 @@ from google.oauth2 import service_account
 import io
 import bcrypt
 
-# ==================== CONFIG GCP ====================
+# ==================== CONFIG ====================
 PROJECT_ID = "datalake-380714"
 DATASET_ID = "pole_agri"
 
@@ -134,7 +134,7 @@ def query_stats_famille(date_min="2025-01-01"):
       LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
       WHERE c.date_validation IS NOT NULL
-        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) >= DATE '{date_min}'
+        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) >= DATE('{date_min}')
     )
     SELECT
       famille_finale,
@@ -148,24 +148,20 @@ def query_stats_famille(date_min="2025-01-01"):
     """
     return client.query(QUERY).result().to_dataframe()
 
-def export_excel(df: pd.DataFrame, filename: str, decimal_comma=True):
+def export_excel(df, filename):
     buffer = io.BytesIO()
-    df_export = df.copy()
-    if decimal_comma:
-        for col in df_export.select_dtypes(include=["float", "int"]).columns:
-            df_export[col] = df_export[col].map(lambda x: str(round(x, 2)).replace(".", ",") if pd.notnull(x) else "")
-    df_export.to_excel(buffer, index=False, engine="openpyxl")
+    df.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
     st.download_button(
-        "⬇️ Télécharger " + filename,
+        label=f"⬇️ Télécharger {filename}",
         data=buffer,
         file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 # ==================== NAVIGATION ====================
 st.sidebar.title("📂 Menu")
-page = st.sidebar.radio("Navigation", ["Clients", "Commandes", "Statistiques par famille"])
+page = st.sidebar.radio("Navigation", ["Clients", "Panier moyen", "Statistiques par famille"])
 
 # ==================== PAGE CLIENTS ====================
 if page == "Clients":
@@ -183,11 +179,10 @@ if page == "Clients":
 
         export_excel(df_clean, "export_clients_clean.xlsx")
 
-# ==================== PAGE COMMANDE ====================
+# ==================== PAGE PANIER MOYEN ====================
 elif page == "Panier moyen":
     st.header("🛒 Analyse Panier Moyen Produits")
 
-    # Sélecteur de date (par défaut 01/01/2020)
     date_min = st.date_input(
         "Date de début (vide = pas de filtre)",
         pd.to_datetime("2020-01-01"),
@@ -202,27 +197,23 @@ elif page == "Panier moyen":
         st.write(f"✅ {len(df_cmd)} lignes récupérées")
         st.dataframe(df_cmd.head(20))
 
-        # ==================== SEUILS ====================
+        # === SEUILS ===
         seuil_ventes = 2
         seuil_panier_moyen = 250
         seuil_chiffre_affaire = 180
-        # ===============================================
 
         filtered = df_cmd[
             (df_cmd["nb_commandes"] >= seuil_ventes) &
             (df_cmd["panier_moyen"] >= seuil_panier_moyen) &
             (df_cmd["ca"] >= seuil_chiffre_affaire)
         ]
-
         st.write(f"✅ {len(filtered)} lignes après filtrage")
         st.dataframe(filtered.head(20))
 
         export_excel(filtered, "commandes_filtrees.xlsx")
 
-        # Split par prix de vente
         sup_800 = filtered[filtered["prix_vente"] > 800]
         inf_800 = filtered[filtered["prix_vente"] <= 800]
-
         export_excel(sup_800, "commandes_prix_sup_800.xlsx")
         export_excel(inf_800, "commandes_prix_inf_800.xlsx")
 
@@ -230,7 +221,6 @@ elif page == "Panier moyen":
 elif page == "Statistiques par famille":
     st.header("📊 Statistiques par famille de produits")
 
-    # Sélecteur de date (par défaut 01/01/2025)
     date_min = st.date_input(
         "Date de début (vide = pas de filtre)",
         pd.to_datetime("2025-01-01"),
@@ -239,7 +229,6 @@ elif page == "Statistiques par famille":
 
     if st.button("📥 Extraire statistiques"):
         date_filter = date_min.strftime("%Y-%m-%d") if date_min else None
-
         with st.spinner("Récupération des statistiques..."):
             df_stats = query_stats_famille(date_filter)
 
@@ -248,10 +237,12 @@ elif page == "Statistiques par famille":
             options=df_stats["famille_finale"].dropna().unique(),
             default=[]
         )
-
         if familles:
             df_stats = df_stats[df_stats["famille_finale"].isin(familles)]
 
         st.dataframe(df_stats)
 
-        export_excel(df_stats, "stats_famille.xlsx")
+        df_export = df_stats.copy()
+        for col in ["ca", "marge", "pct_marge"]:
+            df_export[col] = df_export[col].round(2).map(lambda x: str(x).replace(".", ","))
+        export_excel(df_export, "stats_famille.xlsx")
