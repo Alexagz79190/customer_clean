@@ -138,7 +138,8 @@ def query_stats_famille(date_min="2025-01-01", date_max=None):
       LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
       WHERE c.date_validation IS NOT NULL
-        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation) BETWEEN DATE('{date_min}') AND DATE('{date_max}')
+        AND SAFE.PARSE_DATE('%Y-%m-%d', c.date_validation)
+            BETWEEN DATE('{date_min}') AND DATE('{date_max}')
     )
     SELECT
       famille_finale,
@@ -151,7 +152,7 @@ def query_stats_famille(date_min="2025-01-01", date_max=None):
     ORDER BY ca DESC
     """
     return client.query(QUERY).result().to_dataframe()
-
+    
 # ==================== NAVIGATION ====================
 st.sidebar.title("📂 Menu")
 page = st.sidebar.radio("Navigation", ["Clients", "Panier moyen", "Statistiques par famille"])
@@ -211,27 +212,35 @@ elif page == "Panier moyen":
         export_excel(inf_800, "commandes_prix_inf_800.xlsx")
 
 # ==================== PAGE STATS FAMILLE ====================
+import datetime
+
 elif page == "Statistiques par famille":
     st.header("📊 Statistiques par famille de produits")
 
-    # Plage de dates : par défaut du 01/01/2025 à aujourd'hui
+    # 2 champs date séparés
     today = datetime.date.today()
-    date_range = st.date_input(
-        "Plage de dates",
-        value=(datetime.date(2025, 1, 1), today),
+    date_min = st.date_input(
+        "Date de début",
+        value=datetime.date(2025, 1, 1),
+        format="DD-MM-YYYY"
+    )
+    date_max = st.date_input(
+        "Date de fin",
+        value=today,
         format="DD-MM-YYYY"
     )
 
     if st.button("📥 Extraire statistiques"):
-        date_min = date_range[0].strftime("%Y-%m-%d")
-        date_max = date_range[1].strftime("%Y-%m-%d")
+        dmin = date_min.strftime("%Y-%m-%d")
+        dmax = date_max.strftime("%Y-%m-%d")
 
         with st.spinner("Récupération des statistiques..."):
-            df_stats = query_stats_famille(date_min, date_max)
+            df_stats = query_stats_famille(dmin, dmax)
 
-        # Sauvegarder dans session_state pour éviter de recharger
+        # Sauvegarder dans session_state pour garder les données en mémoire
         st.session_state["df_stats"] = df_stats
 
+    # Affichage + filtre familles
     if "df_stats" in st.session_state:
         df_stats = st.session_state["df_stats"]
 
@@ -244,8 +253,13 @@ elif page == "Statistiques par famille":
 
         st.dataframe(df_filtered)
 
+        # Export Excel avec virgules pour décimales
         df_export = df_filtered.copy()
         for col in ["ca", "marge", "pct_marge"]:
             df_export[col] = df_export[col].round(2).map(lambda x: str(x).replace(".", ","))
 
-        export_excel(df_export, "stats_famille.xlsx")
+        # Appel sûr de la fonction
+        if "export_excel" in globals():
+            export_excel(df_export, "stats_famille.xlsx")
+        else:
+            st.error("⚠️ La fonction export_excel n'est pas définie")
