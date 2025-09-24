@@ -118,8 +118,8 @@ if page == "Clients":
 # ==================== PAGE PANIER MOYEN ====================
 elif page == "Panier moyen":
     st.header("🛒 Analyse Panier Moyen")
-    date_min = st.date_input("Date de début", value=datetime.date(2020, 1, 1))
-    date_max = st.date_input("Date de fin", value=datetime.date.today())
+    date_min = st.date_input("Date de début", value=datetime.date(2020, 1, 1), format="DD/MM/YYYY")
+    date_max = st.date_input("Date de fin", value=datetime.date.today(), format="DD/MM/YYYY")
 
     if st.button("📥 Calculer panier moyen"):
         query = f"""
@@ -144,12 +144,20 @@ elif page == "Panier moyen":
         ventes = df.groupby("code_produit")["numero_commande"].nunique().reset_index(name="nb_commandes")
         qte = df.groupby("code_produit")["quantite"].sum().reset_index(name="quantite_totale")
         ca = df.groupby("code_produit")["prix_total_ht"].sum().reset_index(name="ca_total")
+
         df_merge = df.merge(ventes, on="code_produit").merge(qte, on="code_produit").merge(ca, on="code_produit")
         df_merge["panier_moyen"] = (df_merge["ca_total"] / df_merge["nb_commandes"]).round(2)
 
         # Famille escalade
-        df_merge["famille"] = df_merge["famille4"].fillna(df_merge["famille3"]).fillna(df_merge["famille2"]).fillna(df_merge["famille1"])
-        df_export = df_merge[["code_produit", "libelle_produit", "famille", "nb_commandes", "quantite_totale", "ca_total", "panier_moyen"]].drop_duplicates()
+        df_merge["famille"] = (
+            df_merge["famille4"].fillna(df_merge["famille3"])
+            .fillna(df_merge["famille2"])
+            .fillna(df_merge["famille1"])
+        )
+
+        df_export = df_merge[
+            ["code_produit", "libelle_produit", "famille", "nb_commandes", "quantite_totale", "ca_total", "panier_moyen"]
+        ].drop_duplicates()
 
         # Application des seuils
         df_export = df_export[
