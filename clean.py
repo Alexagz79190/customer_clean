@@ -167,8 +167,8 @@ elif page == "Panier moyen":
 # ==================== PAGE STATISTIQUES FAMILLE ====================
 elif page == "Statistiques Famille":
     st.header("📊 Statistiques par Famille")
-    date_debut = st.date_input("Date de début", value=datetime.date(2025, 1, 1))
-    date_fin = st.date_input("Date de fin", value=datetime.date.today())
+    date_debut = st.date_input("Date de début", value=datetime.date(2025, 1, 1), format="DD/MM/YYYY")
+    date_fin = st.date_input("Date de fin", value=datetime.date.today(), format="DD/MM/YYYY")
 
     if st.button("📥 Générer statistiques"):
         query = f"""
@@ -213,17 +213,6 @@ elif page == "Statistiques Famille":
             .fillna(df["famille2_url"])
             .fillna(df["famille1_url"])
         )
-
-        # 🔍 Diagnostic commandes sans famille
-        df_sans_fam = df[df["famille"].isna()]
-        if not df_sans_fam.empty:
-            ca_sans_fam = df_sans_fam["prix_total_ht"].sum()
-            st.error(f"❌ {len(df_sans_fam)} commandes sans famille. CA = {ca_sans_fam:,.2f} €")
-            st.write("👉 Exemples de codes produits sans famille :")
-            st.dataframe(df_sans_fam[["code_produit"]].drop_duplicates().head(20))
-            export_excel(df_sans_fam, "commandes_sans_famille.xlsx")
-        else:
-            st.success("✅ Toutes les commandes ont une famille après escalade.")
 
         # 🔹 Calcul marge
         df["marge_calc"] = df["prix_total_ht"] - (df["prix_achat"] * df["quantite"])
