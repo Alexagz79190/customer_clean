@@ -142,7 +142,7 @@ elif page == "Panier moyen":
     LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
         ON c.code_produit = p.code
     WHERE c.date_validation IS NOT NULL
-      AND SAFE.CAST(c.date_validation AS DATE) BETWEEN "{date_min}" AND "{date_max}"
+      AND SAFE.PARSE_DATE("%Y-%m-%d", c.date_validation) BETWEEN "{date_min}" AND "{date_max}"
 """
         df = bq_query(query)
 
