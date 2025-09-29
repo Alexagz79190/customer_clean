@@ -129,21 +129,21 @@ elif page == "Panier moyen":
 
     if st.button("📥 Calculer panier moyen"):
         query = f"""
-        SELECT
-            c.numero_commande,
-            c.date_validation,
-            c.code_produit,
-            c.quantite,
-            c.prix_total_ht,
-            c.prix_achat,
-            p.libelle AS libelle_produit,
-            p.famille1, p.famille2, p.famille3, p.famille4
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
-            ON c.code_produit = p.code
-        WHERE c.date_validation IS NOT NULL
-          AND DATE(c.date_validation) BETWEEN "{date_min}" AND "{date_max}"
-        """
+    SELECT
+        c.numero_commande,
+        c.date_validation,
+        c.code_produit,
+        c.quantite,
+        c.prix_total_ht,
+        c.prix_achat,
+        p.libelle AS libelle_produit,
+        p.famille1, p.famille2, p.famille3, p.famille4
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLES['commande']}` c
+    LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
+        ON c.code_produit = p.code
+    WHERE c.date_validation IS NOT NULL
+      AND SAFE.CAST(c.date_validation AS DATE) BETWEEN "{date_min}" AND "{date_max}"
+"""
         df = bq_query(query)
 
         # Calculs
