@@ -261,7 +261,7 @@ elif page == "Statistiques Famille":
             LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{TABLES['produit']}` p
                 ON c.code_produit = p.code
             WHERE c.date_validation IS NOT NULL
-              AND DATE(c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
+              AND SAFE.PARSE_DATE("%Y-%m-%d", c.date_validation) BETWEEN "{date_debut}" AND "{date_fin}"
             """
             df = bq_query(query)
 
