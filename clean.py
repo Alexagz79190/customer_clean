@@ -18,8 +18,8 @@ TABLES = {
 
 # Seuils Panier Moyen
 SEUIL_VENTES = 2
-SEUIL_PANIER_MOYEN = 250
-SEUIL_CA = 180
+SEUIL_PANIER_MOYEN = 150
+SEUIL_CA = 50
 
 # Authentification GCP
 creds_dict = st.secrets["gcp_service_account"]
